@@ -1,0 +1,22 @@
+{
+  "F-01-smoke": {
+    "pass": true,
+    "detail": "text=' city of neighborhoods, and each one has its own unique char...'"
+  },
+  "F-02-usage": {
+    "pass": true,
+    "detail": "usage={'prompt_tokens': 5, 'total_tokens': 13, 'completion_tokens': 8, 'prompt_tokens_details': None}, 4 concurrent OK"
+  },
+  "F-04-dbo": {
+    "pass": true,
+    "detail": "DBO mode OK, text=' computer science that uses statistical techniques to give c...'"
+  },
+  "F-05-consistency": {
+    "pass": true,
+    "detail": "match_rate=100% (4/4), mismatches=[]"
+  },
+  "F-03-graph": {
+    "pass": true,
+    "detail": "graph mode OK, text=' city of neighborhoods, and each one has its own unique char...'"
+  }
+}

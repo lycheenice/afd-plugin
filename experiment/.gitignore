@@ -1,0 +1,4 @@
+# Experiment logs are too large for git, keep locally
+experiment/logs/
+# Download logs
+*.download.log

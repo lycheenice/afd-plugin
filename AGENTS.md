@@ -152,3 +152,11 @@ def route_request(self, request: Request, priority: int = 0) -> RouteResult:
 
 UpstreamClass.route_request = route_request
 ```
+
+## 实验执行环境
+
+性能/功能实验在远程机器 **gpu-host** 上执行,不要在开发本机上跑。
+会话开始任何实测前,先读 `experiment/EXPERIMENT_ENV.md` —— 它记录了
+SSH 登录方式 (`ssh root@gpu-host` 免密)、`afd-exp` 容器、模型/代码挂载路径、
+GPU 清场命令和实验启动命令。开发本机 (`lychee@REDACTED_IP`) 无 docker/sudo
+权限,且 GPU 被其他占用,**不可**用于实验。

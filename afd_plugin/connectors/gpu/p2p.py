@@ -186,6 +186,9 @@ class P2pNcclAFDConnector(AFDConnectorBase):
         self.ratio = self.mapping.ratio
         self.group_size = len(self.mapping.subgroup_ranks)
         self.dst_list = list(self.mapping.dp_metadata_destinations)
+        # ### PATCH START: AFD fan-out topology (attention < ffn, e.g. 1A2F)
+        self.reversed = getattr(self.mapping, "reversed", False)
+        # ### PATCH END: AFD fan-out topology
         self.num_hidden_layers = (vllm_config.model_config.hf_config.num_hidden_layers,)
         self.hidden_size = vllm_config.model_config.hf_config.hidden_size
         self.dp_metadata_list: dict[int, DPMetadata | AFDDPMetadata] = {}
@@ -260,7 +263,7 @@ class P2pNcclAFDConnector(AFDConnectorBase):
             world_size=self.ffn_size + self.attn_size,
             rank=self.world_rank,
             group_name="afd",
-            timeout=timedelta(minutes=2),
+            timeout=timedelta(minutes=10),
         )
 
         with DefaultProcessGroupSwitcher(_get_default_group(), afd_pg):
@@ -329,6 +332,17 @@ class P2pNcclAFDConnector(AFDConnectorBase):
                 f"hidden_states shape {hidden_states.shape!r} does not match "
                 f"AFD metadata token count {metadata.total_tokens}",
             )
+        # ### PATCH START: AFD fan-out topology (attention < ffn, e.g. 1A2F)
+        if self.reversed:
+            for dst in range(1, self.group_size):
+                self._send_hidden_states(
+                    hidden_states,
+                    dst,
+                    self.a2e_group,
+                    self.a2e_comm_id,
+                )
+            return
+        # ### PATCH END: AFD fan-out topology
         self._send_hidden_states(
             hidden_states,
             0,
@@ -359,6 +373,17 @@ class P2pNcclAFDConnector(AFDConnectorBase):
             RuntimeError: If the connector is not initialized, or no receive
                 is performed for a single-rank subgroup.
         """
+        # ### PATCH START: AFD fan-out topology (attention < ffn, e.g. 1A2F)
+        if self.reversed:
+            output = self._recv_hidden_states(
+                1,
+                self.e2a_group,
+                self.e2a_comm_id,
+                self.tensor_metadata_list[ubatch_idx],
+                ref_tensor=ref_tensor,
+            )
+            return output
+        # ### PATCH END: AFD fan-out topology
         output = self._recv_hidden_states(
             0,
             self.e2a_group,
@@ -399,6 +424,34 @@ class P2pNcclAFDConnector(AFDConnectorBase):
             RuntimeError: If the connector is not initialized or the subgroup
                 has no Attention peers.
         """
+        # ### PATCH START: AFD fan-out topology (attention < ffn, e.g. 1A2F)
+        if self.reversed:
+            tensor_metadata = self._recv_attn_tensor_metadata_list.get(
+                (ubatch_idx, 0),
+                self.tensor_metadata_list[ubatch_idx],
+            )
+            ref_tensor = None
+            if not self.vllm_config.model_config.enforce_eager:
+                ref_tensor = self._recv_attn_buffers.get(
+                    (ubatch_idx, 0, tuple(tensor_metadata.size)),
+                )
+            hidden_states = self._recv_hidden_states(
+                0,
+                self.a2e_group,
+                self.a2e_comm_id,
+                tensor_metadata,
+                ref_tensor=ref_tensor,
+            )
+            metadata = AFDTransferMetadata.create_ffn_metadata(
+                layer_idx=0,
+                stage_idx=ubatch_idx,
+                seq_lens=[hidden_states.shape[0]],
+            )
+            return AFDA2FTransferPayload(
+                hidden_states=hidden_states,
+                context=AFDTransferContext(metadata=metadata),
+            )
+        # ### PATCH END: AFD fan-out topology
         hidden_states_list: list[torch.Tensor] = []
 
         for src in range(1, self.group_size):
@@ -474,6 +527,15 @@ class P2pNcclAFDConnector(AFDConnectorBase):
             raise ValueError(
                 f"ffn_output shape {ffn_output.shape!r} does not match metadata",
             )
+        # ### PATCH START: AFD fan-out topology (attention < ffn, e.g. 1A2F)
+        if self.reversed:
+            if self.mapping.rank_in_subgroup != 1:
+                return
+            self._send_hidden_states(
+                ffn_output, 0, self.e2a_group, self.e2a_comm_id,
+            )
+            return
+        # ### PATCH END: AFD fan-out topology
         if self.ratio == 1:
             self._send_hidden_states(ffn_output, 1, self.e2a_group, self.e2a_comm_id)
             return
@@ -632,6 +694,33 @@ class P2pNcclAFDControlPlane(AFDControlPlane):
         for stage_idx, dp_metadata in payload.dp_metadata_list.items():
             stage_idx = stage_idx
             if connector.afd_config.role == "ffn":
+                # ### PATCH START: AFD fan-out topology (attention < ffn, e.g. 1A2F)
+                if connector.reversed:
+                    src_rank = 0
+                    attention_rank = connector.mapping.subgroup_index
+                    tensor_metadata = _TensorMetadata(
+                        device,
+                        dtype,
+                        torch.Size(
+                            [
+                                _num_tokens_for_attention_rank(
+                                    dp_metadata,
+                                    attention_rank=attention_rank,
+                                    attention_size=connector.attn_size,
+                                ),
+                                connector.hidden_size,
+                            ],
+                        ),
+                    )
+                    connector._recv_attn_tensor_metadata_list[(stage_idx, src_rank)] = (
+                        tensor_metadata
+                    )
+                    num_tokens = tensor_metadata.size[0]
+                    connector.tensor_metadata_list[stage_idx] = _TensorMetadata(
+                        device, dtype, torch.Size([num_tokens, connector.hidden_size]),
+                    )
+                    continue
+                # ### PATCH END: AFD fan-out topology
                 peer_metadata: list[_TensorMetadata] = []
                 for src_rank in range(1, connector.group_size):
                     if src_rank <= 0 or src_rank >= connector.group_size:

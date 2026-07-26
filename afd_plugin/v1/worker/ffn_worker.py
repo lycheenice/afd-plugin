@@ -167,12 +167,17 @@ class AFDFFNWorker(Worker):
         event = self._ffn_shutdown_event
         if event is not None:
             event.set()
+        # Signal the loop, then wait for it to drain its current iteration
+        # BEFORE tearing down the connector. Joining first avoids a race where
+        # model_runner.shutdown() resets the connector's ``_initialized`` flag
+        # while the loop thread is still inside ``send_ffn_output``, which
+        # otherwise raises "P2P connector is not initialized" at shutdown.
+        thread = self._ffn_thread
+        if thread is not None:
+            thread.join(timeout=5)
         try:
             self.model_runner.shutdown()
         finally:
-            thread = self._ffn_thread
-            if thread is not None:
-                thread.join(timeout=5)
             self._ffn_thread = None
             self._ffn_shutdown_event = None
         self.raise_ffn_loop_error_if_any()
