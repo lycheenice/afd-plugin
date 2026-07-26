@@ -125,6 +125,16 @@ def register_afd() -> None:
             exc_info=True,
         )
 
+    try:
+        from afd_plugin.quantization import W4AFP8Config  # noqa: F401
+
+        _logger.debug("AFD plugin: w4afp8 quantization registered")
+    except Exception:
+        _logger.debug(
+            "AFD plugin: w4afp8 quantization could not be registered",
+            exc_info=True,
+        )
+
     from vllm.model_executor.models import ModelRegistry
 
     for model_arch, model_cls in _DEEPSEEK_MODEL_REGISTRATIONS.items():
