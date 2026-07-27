@@ -35,7 +35,16 @@ from vllm.model_executor.layers.quantization.base_config import (
 )
 from vllm.model_executor.layers.quantization.fp8 import Fp8Config
 from vllm.model_executor.layers.attention import Attention
-from vllm.model_executor.layers.fused_moe import FusedMoE
+try:
+    # vLLM >= 0.2x: the MoE stack is FusedMoE(factory) -> MoERunner -> RoutedExperts.
+    # ``get_quant_method`` is invoked with the RoutedExperts layer (see
+    # fused_moe/routed_experts.py::_get_quant_method), so that is the class to match.
+    from vllm.model_executor.layers.fused_moe.routed_experts import (
+        RoutedExperts as _AFD_MOE_LAYER_CLS,
+    )
+except ImportError:
+    # vLLM 0.19.1: ``FusedMoE`` is itself the MoE layer class.
+    from vllm.model_executor.layers.fused_moe import FusedMoE as _AFD_MOE_LAYER_CLS
 
 
 def _patch_convert_bf16_scales_to_fp8() -> None:
@@ -129,7 +138,7 @@ class W4AFP8Config(QuantizationConfig):
             return self._fp8_config.get_quant_method(layer, prefix)
         if isinstance(layer, Attention):
             return self._fp8_config.get_quant_method(layer, prefix)
-        if isinstance(layer, FusedMoE):
+        if isinstance(layer, _AFD_MOE_LAYER_CLS):
             return _W4AFP8MoEMethod.create(layer.moe_config)
         return None
 
@@ -148,9 +157,17 @@ class _W4AFP8MoEMethod:
     @staticmethod
     def create(moe_config) -> Any:
         from compressed_tensors.quantization import QuantizationArgs
-        from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors_moe import (
-            CompressedTensorsW4A8Fp8MoEMethod,
-        )
+
+        try:
+            # vLLM >= 0.2x: split into a per-scheme submodule.
+            from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors_moe.compressed_tensors_moe_w4a8_fp8 import (  # noqa: E501
+                CompressedTensorsW4A8Fp8MoEMethod,
+            )
+        except ImportError:
+            # vLLM 0.19.1: single compressed_tensors_moe module.
+            from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors_moe import (  # noqa: E501
+                CompressedTensorsW4A8Fp8MoEMethod,
+            )
 
         weight_quant = QuantizationArgs(
             num_bits=4,
