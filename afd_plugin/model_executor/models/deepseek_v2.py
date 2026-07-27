@@ -48,6 +48,7 @@ from afd_plugin.model_executor.models import (
     get_afd_metadata_from_forward_context,
     get_async_moe_ubatch_metadata_from_forward_context,
 )
+from afd_plugin.quantization.w4afp8 import remap_w4afp8_moe_checkpoint_weights
 from afd_plugin.v1.worker.dbo import maybe_apply_dbo_yield
 
 logger = init_logger(__name__)
@@ -361,6 +362,7 @@ class AFDDeepseekV2Model(torch.nn.Module):
         self.config = config
         self.device = native.current_platform.device_type
 
+
         self.vocab_size = config.vocab_size
         self.is_v32 = hasattr(config, "index_topk")
         if self.is_v32:
@@ -668,6 +670,22 @@ class AFDDeepseekV2ForCausalLM(native.DeepseekV2ForCausalLM):
         return self.model.compute_ffn_output(hidden_states, layer_idx, **kwargs)
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        # ### PATCH START: W4AFP8 routed-expert checkpoint key/dtype remap
+        # GLM-5.2-W4AFP8 names routed-expert projections with the plain
+        # ``.weight`` / ``.weight_scale_inv`` suffixes, which the generic
+        # expert param mapping would route to nonexistent ``w13_weight`` /
+        # ``w13_weight_scale_inv`` params and silently skip. Rewrite them to the
+        # ``.weight_packed`` (int32) / ``.weight_scale`` names that vLLM's
+        # CompressedTensorsW4A8Fp8MoEMethod registers before delegating to the
+        # normal loader below.
+        vllm_config = get_current_vllm_config()
+        if (
+            vllm_config.quant_config is not None
+            and vllm_config.quant_config.get_name() == "w4afp8"
+        ):
+            weights = remap_w4afp8_moe_checkpoint_weights(weights)
+        # ### PATCH END: W4AFP8 routed-expert checkpoint key/dtype remap
+
         ascend_config = get_ascend_config() if get_ascend_config is not None else None
         stacked_params_mapping = [
             ("gate_up_proj", "gate_proj", 0),

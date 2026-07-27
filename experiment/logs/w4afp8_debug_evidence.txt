@@ -1,0 +1,40 @@
+(Worker_TP0_EP0 pid=37604) AFD_DBG_FWD afd_metadata_is_none=True afd_role=None
+(Worker_TP0_EP0 pid=37604) AFD_DBG embed norm=7.6610 min=-0.0243 max=0.0243 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 0 h_norm=4.3795 h_max=0.0378 r_norm=7.6610 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 1 h_norm=6.0572 h_max=0.1060 r_norm=10.4803 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 2 h_norm=5.7811 h_max=0.0598 r_norm=12.9988 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 3 h_norm=1.1088 h_max=0.0061 r_norm=10.9429 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 4 h_norm=1.4800 h_max=0.0072 r_norm=10.9592 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG_FWD afd_metadata_is_none=True afd_role=None
+(Worker_TP0_EP0 pid=37604) AFD_DBG embed norm=7.6610 min=-0.0243 max=0.0243 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 0 h_norm=4.3795 h_max=0.0378 r_norm=7.6610 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 1 h_norm=6.0572 h_max=0.1060 r_norm=10.4803 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 2 h_norm=5.7811 h_max=0.0598 r_norm=12.9988 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 3 h_norm=1.1088 h_max=0.0061 r_norm=10.9429 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 4 h_norm=1.4800 h_max=0.0072 r_norm=10.9592 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG_FWD afd_metadata_is_none=True afd_role=None
+(Worker_TP0_EP0 pid=37604) AFD_DBG embed norm=1.9153 min=-0.0243 max=0.0243 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 0 h_norm=1.0952 h_max=0.0383 r_norm=1.9153 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 1 h_norm=1.4868 h_max=0.1040 r_norm=2.6189 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 2 h_norm=1.4100 h_max=0.0559 r_norm=3.2324 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 3 h_norm=0.2730 h_max=0.0060 r_norm=2.7285 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 4 h_norm=0.3700 h_max=0.0082 r_norm=2.7326 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG_FWD afd_metadata_is_none=True afd_role=None
+(Worker_TP0_EP0 pid=37604) AFD_DBG embed norm=1.3504 min=-0.0569 max=0.0535 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 0 h_norm=0.6629 h_max=0.0598 r_norm=1.4277 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 1 h_norm=0.3331 h_max=0.0364 r_norm=1.2781 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 2 h_norm=0.2934 h_max=0.0276 r_norm=1.2008 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 3 h_norm=0.1443 h_max=0.0173 r_norm=1.2481 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 4 h_norm=0.2407 h_max=0.0277 r_norm=1.3001 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG_FWD afd_metadata_is_none=True afd_role=None
+(Worker_TP0_EP0 pid=37604) AFD_DBG embed norm=0.6582 min=-0.0294 max=0.0270 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 0 h_norm=0.4635 h_max=0.0503 r_norm=0.7478 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 1 h_norm=0.1736 h_max=0.0203 r_norm=0.6822 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 2 h_norm=0.1663 h_max=0.0165 r_norm=0.6330 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 3 h_norm=0.0673 h_max=0.0060 r_norm=0.6489 nan=False
+(Worker_TP0_EP0 pid=37604) AFD_DBG layer 4 h_norm=0.1150 h_max=0.0080 r_norm=0.6632 nan=False
+(Worker_TP0_EP0 pid=39659) AFD_DBG_FWD afd_metadata_is_none=True afd_role=None
+(Worker_TP0_EP0 pid=39659) AFD_DBG embed norm=7.6610 min=-0.0243 max=0.0243 nan=False
+(Worker_TP0_EP0 pid=39659) AFD_DBG layer 0 h_norm=4.3795 h_max=0.0378 r_norm=7.6610 nan=False
+(Worker_TP0_EP0 pid=39659) AFD_DBG layer 1 h_norm=6.0572 h_max=0.1060 r_norm=10.4803 nan=False
+(Worker_TP0_EP0 pid=39659) AFD_DBG layer 2 h_norm=5.7811 h_max=0.0598 r_norm=12.9988 nan=False

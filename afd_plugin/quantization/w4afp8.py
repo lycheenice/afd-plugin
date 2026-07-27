@@ -20,6 +20,8 @@ See ``experiment/W4AFP8_DESIGN.md`` for full design rationale.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 import torch
@@ -173,4 +175,63 @@ class _W4AFP8MoEMethod:
         )
 
 
-__all__ = ["W4AFP8Config"]
+__all__ = ["W4AFP8Config", "remap_w4afp8_moe_checkpoint_weights"]
+
+
+# GLM-5.2-W4AFP8 stores routed-expert projections as
+# ``...mlp.experts.{id}.{gate,up,down}_proj.weight`` (int8, two uint4b8
+# nibbles per byte) with ``...weight_scale_inv`` (bfloat16 group scales).
+# vLLM's ``CompressedTensorsW4A8Fp8MoEMethod`` instead registers, during
+# loading, ``w13_weight_packed`` / ``w2_weight_packed`` (int32, eight uint4b8
+# nibbles per int32) and ``w13_weight_scale`` / ``w2_weight_scale``.  Only the
+# routed experts differ; dense MLP, shared experts, attention, and the DSA
+# indexer are all FP8 and load through ``Fp8Config`` unchanged.
+_ROUTED_EXPERT_PROJ_RE = re.compile(
+    r"\.mlp\.experts\.\d+\.(?:gate_proj|up_proj|down_proj)\."
+)
+
+_CKPT_WEIGHT_SUFFIX = ".weight"
+_CKPT_SCALE_SUFFIX = ".weight_scale_inv"
+
+
+def remap_w4afp8_moe_checkpoint_weights(
+    weights: Iterable[tuple[str, torch.Tensor]],
+) -> Iterator[tuple[str, torch.Tensor]]:
+    """Rename GLM-5.2 W4AFP8 routed-expert keys to vLLM's W4A8 param names.
+
+    ``make_expert_params_mapping`` builds destination parameter names by string
+    substitution that preserves the checkpoint suffix, so genuine
+    compressed-tensors checkpoints (``.weight_packed`` / ``.weight_scale``) map
+    directly onto ``w13_weight_packed`` / ``w13_weight_scale``.  GLM-5.2 uses
+    the plain ``.weight`` / ``.weight_scale_inv`` suffixes, which would map onto
+    the nonexistent ``w13_weight`` / ``w13_weight_scale_inv`` and be silently
+    skipped, leaving the packed params uninitialised (garbage output).
+
+    This generator rewrites only routed-expert projections:
+
+    - ``.weight`` (int8, 2 nibbles/byte) -> ``.weight_packed`` viewed as int32
+      (8 nibbles/int32).  The byte layout is identical, so the int32 view is a
+      free reinterpretation; the trailing dimension shrinks by 4x to exactly
+      the shape ``CompressedTensorsW4A8Fp8MoEMethod`` allocates.  SGLang stores
+      each 4-bit value as signed two's-complement (symmetric ``[-7, 7]``, with
+      ``-8`` unused), but vLLM's ``convert_packed_uint4b8_to_signed_int4_inplace``
+      subtracts 8 from every nibble, assuming uint4b8 (value + 8) storage.  We
+      convert 2's-complement -> uint4b8 by adding 8 modulo 16 to each nibble,
+      which is exactly ``XOR 0x8`` per nibble (``0x88`` per byte), so that
+      vLLM's later ``- 8`` recovers the correct signed weight.
+    - ``.weight_scale_inv`` (bfloat16 group scales) -> ``.weight_scale``.
+
+    Dense MLP, shared experts, attention, and indexer weights are yielded
+    unchanged.
+    """
+    for name, weight in weights:
+        if _ROUTED_EXPERT_PROJ_RE.search(name):
+            if name.endswith(_CKPT_WEIGHT_SUFFIX) and weight.dtype == torch.int8:
+                packed = (weight.contiguous().view(torch.uint8) ^ 0x88).view(
+                    torch.int32
+                )
+                weight = packed
+                name = f"{name[: -len(_CKPT_WEIGHT_SUFFIX)]}.weight_packed"
+            elif name.endswith(_CKPT_SCALE_SUFFIX):
+                name = f"{name[: -len(_CKPT_SCALE_SUFFIX)]}.weight_scale"
+        yield name, weight

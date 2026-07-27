@@ -1,13 +1,13 @@
 # W4AFP8 GLM-5.2 AFD 冒烟测试 — 会话状态
 
-> **目的**：本文档记录上一会话的工作内容和当前阻塞点，供新会话直接接续。
-> 最后更新：2026-07-26
+> 本文档记录调试进展，供新会话直接接续。
+> 最后更新：2026-07-26（第二会话，纠正了上一会话的错误诊断）
 
 ---
 
 ## 1. 最终目标
 
-在 AFD（Attention-FFN Disaggregation）4A4F 拓扑下运行 **GLM-5.2-W4AFP8** 模型，
+在 AFD（Attention-FFN Disaggregation）4A4F 拓扑下运行 **GLM-5.2-W4AFP8**，
 在 8×H200（每卡 143GB）上产出**正确的输出文本**（而非乱码 token）。
 
 ---
@@ -16,215 +16,131 @@
 
 | 项 | 值 |
 |---|---|
-| 实验机器 | `ssh root@gpu-host`（免密，IP REDACTED_IP） |
-| 开发本机 | `lychee@REDACTED_IP`（无 sudo/docker，不可跑实验） |
-| 容器 | `afd-exp`（镜像 `vllm/vllm-openai:v0.19.1`，bind mount `/data1`→容器） |
-| 模型路径 | 容器内 `/models/GLM-5.2-W4AFP8`，host `/data1/models/GLM-5.2-W4AFP8` |
-| 代码挂载 | host `/data1/afd-plugin` → 容器 `/workspace/afd-plugin` |
-| GPU | 8×H200 143GB，4A4F = GPU 0-3 Attention / GPU 4-7 FFN |
+| 实验机器 | `ssh root@gpu-host`（免密，REDACTED_IP） |
+| 开发/归档机 | 本机 archive-host（`/ceph/User/user/mycode/afd-plugin`，git 主仓库）。**无 rsync，用 `scp`**；editable 安装，重启即生效 |
+| 容器 | `afd-exp`（镜像 `vllm/vllm-openai:v0.19.1`，`/data1`→容器 `/workspace`） |
+| 模型 | 容器内 `/models/GLM-5.2-W4AFP8`（host `/data1/models/`），41 shards |
+| GPU | 8×H200 143GB，4A4F = GPU0-3 Attn / GPU4-7 FFN |
 
-详见 `experiment/EXPERIMENT_ENV.md`。
-
----
-
-## 3. 当前进展
-
-### 3.1 已完成 — W4AFP8 量化桥接
-
-vLLM 0.19.1 已有 `CompressedTensorsW4A8Fp8MoEMethod` 内核，但不认识 `w4afp8` 这个
-quant_method 名。我们通过 `W4AFP8Config` 桥接：
-
-- Linear/Attention → 复用 vLLM `Fp8Config`（标准 FP8）
-- FusedMoE → 复用 vLLM `CompressedTensorsW4A8Fp8MoEMethod`（W4A8-FP8 MoE）
-
-**改动文件**（均已提交）：
-
-| 文件 | 说明 |
-|---|---|
-| `afd_plugin/quantization/__init__.py` | 新增，导出 W4AFP8Config |
-| `afd_plugin/quantization/w4afp8.py` | 新增，W4AFP8Config + MoE 工厂 + vLLM bug 修复 |
-| `afd_plugin/__init__.py:128-135` | 修改，在 `register_afd()` 中 import 触发注册 |
-| `experiment/scripts/start_glm52_w4afp8_4a4f.sh` | 新增，4A4F 启动脚本 |
-| `experiment/W4AFP8_DESIGN.md` | 设计文档（含第 8 节实施结果） |
-
-### 3.2 已完成 — vLLM 0.19.1 bug 修复
-
-`convert_bf16_scales_to_fp8`（`vllm/.../quant_utils.py`）调用
-`chan_scales.view(orig_shape[:-1], -1)` 传入 `torch.Size` 对象，
-PyTorch 不接受 → `TypeError`。
-
-修复：在 `w4afp8.py` 模块加载时 monkey-patch 为
-`chan_scales.view(*orig_shape[:-1], -1)`。
-
-### 3.3 已验证的里程碑
-
-| 验证项 | 结果 |
-|---|---|
-| U1-U5 单元测试（模块导入、量化注册、Config 创建、Linear/MoE 路由） | ✅ |
-| I1 vLLM 识别 `quantization=w4afp8` | ✅ |
-| I2 权重加载 41/41 shards，无 OOM | ✅ |
-| I3 GPU 内存：FFN ~104GB/卡，Attn ~135GB/卡，均 < 143GB | ✅ |
-| I4 API 服务就绪 (`/v1/models` 返回) | ✅ |
-| I5 Token 生成（32 tokens，正常响应） | ✅ |
-| **I6 输出质量** | **❌ 乱码** |
+工作流：本机改代码 → `scp` 到 gpu-host → 容器内重启服务 → 实验数据回拷本机。
 
 ---
 
-## 4. 当前阻塞问题 — DSA 输出乱码
+## 3. 重大修正：上一会话根因诊断是错的
 
-### 4.1 现象
+上一会话（§旧 4.2）称 vLLM 0.19.1 的 `GlmMoeDsaForCausalLM` 是空壳、DSA 未实现、
+indexer 权重被跳过。**这是错的**，已逐行核实：
 
-```bash
-# 输入
-curl http://127.0.0.1:18000/v1/completions -H "Content-Type: application/json" \
-  -d '{"model":"glm52-afd-attn","prompt":"Hello, my name is","max_tokens":32,"temperature":0}'
+- vLLM 0.19.1 `deepseek_v2.py` **有完整 DSA**：`Indexer` 类、`SparseAttnIndexer`、
+  `DeepseekV32IndexerBackend`、`is_v32` 处理，`GlmMoeDsaForCausalLM(DeepseekV2ForCausalLM)` 全部继承。
+- AFD 的 `AFDDeepseekV2Model.__init__` **已正确创建 `topk_indices_buffer` 并穿线**到
+  decoder layer → MLA attention → Indexer（与原生逐行一致）。
+- indexer 权重（wq_b/wk FP8、weights_proj/k_norm BF16）本就会被通用 loader 正确加载。
 
-# 输出
-{"choices":[{"text":"odeskodeskodeskodeskodesk..."}]}
-```
+**DSA 不是问题。**
 
-32 个 token 全部是重复的无意义 token `odesk`。
+---
 
-### 4.2 根因分析
+## 4. 已定位并修复的真正主因：MoE routed-expert 权重被静默跳过
 
-vLLM 0.19.1 中 `GlmMoeDsaForCausalLM` 是空壳类：
+### 4.1 根因
 
-```python
-# vllm/model_executor/models/deepseek_v2.py:1638
-class GlmMoeDsaForCausalLM(DeepseekV2ForCausalLM):
-    pass
-```
+GLM-5.2-W4AFP8 的 routed-expert 权重命名为
+`experts.N.{gate,up,down}_proj.weight`（int8）/ `.weight_scale_inv`（bf16），
+而 vLLM 的 `CompressedTensorsW4A8Fp8MoEMethod`（`compressed_tensors_moe.py:2234`）
+在加载期注册的参数名是 `w13/w2_weight_packed`（int32）/ `w13/w2_weight_scale`。
 
-`DeepseekV2ForCausalLM` 完全没有 DSA 相关代码（grep `indexer`, `eh_proj`,
-`enorm`, `hnorm`, `shared_head` 均无命中）。
+`make_expert_params_mapping` 通过**字符串替换保留后缀**构造目标名：真正的
+compressed-tensors checkpoint 后缀是 `.weight_packed`/`.weight_scale`（直接匹配），
+而 GLM 用 `.weight`/`.weight_scale_inv` → 生成 `w13_weight`（无 `_packed`）→
+`params_dict` 无此键 → AFD loader `if name_mapped not in params_dict: continue`
+**静默跳过全部 MoE expert 权重** → MoE 输出垃圾。
 
-GLM-5.2 的 DSA attention 结构包含以下 checkpoint 权重，但模型类中没有
-对应的模块，因此这些权重被静默跳过：
+### 4.2 附加根因：有符号 int4 vs uint4b8
 
-| DSA 权重 | 出现位置 | 用途 |
+nibble 直方图（expert0 gate_proj）：值 8 **零出现**，峰在 0/15 →
+SGLang 存的是**有符号二补码 int4**（对称 [-7,7]，-8 不用），
+本机 SGLang 源码 `.../quantization/w4afp8.py` 的 `process_weights_after_loading`
+**不对权重减 8**（只 interleave scales），其 CUTLASS kernel 直接当有符号 int4。
+而 vLLM 的 `convert_packed_uint4b8_to_signed_int4_inplace` 会**减 8**（假设 uint4b8）。
+
+### 4.3 修复（已提交到本机，已同步 gpu-host）
+
+| 文件 | 改动 |
+|---|---|
+| `afd_plugin/quantization/w4afp8.py` | 新增 `remap_w4afp8_moe_checkpoint_weights()`：对 routed-expert 权重流 `.weight`(int8)→`.weight_packed`、并 `^0x88`（有符号→uint4b8，使 vLLM 减 8 后还原）、`.view(int32)`；`.weight_scale_inv`→`.weight_scale` |
+| `afd_plugin/model_executor/models/deepseek_v2.py` | `load_weights` 顶部按 `quant_config.get_name()=="w4afp8"` 包裹 weights 流 |
+
+**MoE 修复已从 6 个角度严格验证正确**：CPU round-trip 精确还原有符号 int4 值和顺序；
+`pack_rows` 确认 nibble i→bit 4i（LSB-first，与 int8→int32 小端 view 一致）；
+CUTLASS/SGLang 均 low-first；scale 量级探针 sane；与 vLLM 测试参考路径一致。
+
+---
+
+## 5. 剩余阻塞：模型层的微妙数值问题（非 AFD、非 DSA、非 MoE）
+
+修复 MoE 后输出**仍是乱码**（如 `odesk...`）。逐层调试（临时，已清理）结论：
+
+- **单实例 TP=8（无 AFD 拆分）也乱码** → bug 在**模型层**，非 AFD 连接器/拆分。
+- **禁用 DSA 用 dense MLA 也乱码** → 非 DSA 稀疏路径特有。
+- 逐层 norm：**无 NaN**，残差正常增长（embed 7.66→layer2 13.0），真实 forward 中
+  各位置 hidden state **有实质区分**（cross_pos_std≈0.84） → attention **未坍塌**。
+- logprobs **非 NaN 但近乎均匀**（top token 仅 ~1%）→ 模型能跑但产出无意义分布。
+
+**综合**：模型能跑、无 NaN、位置有区分，但输出系统性错误。这是一个需要**参考实现
+对比**才能精确定位的微妙数值问题。
+
+**最可能的嫌疑（GLM-5.2 特有、DeepSeek-V3 没有的）**：
+`head_dim=192`（`qk_nope_head_dim=192`，DeepSeek-V3 是 128）。vLLM 的
+`GlmMoeDsaForCausalLM` 只是 `DeepseekV2ForCausalLM` 的空壳子类，其 MLA/FlashMLA
+kernel 可能对 GLM 的 192 head_dim 有未适配的假设（日志有
+`Padding num_heads 16→64 for BF16 sparse prefill kernel`）。模型 README 明确
+"4-bit 布局与 DSA 路径是 SGLang 专有，未在 vLLM 上验证过"。
+
+---
+
+## 6. 下一步选项（需你决策）
+
+| 选项 | 说明 | 评估 |
 |---|---|---|
-| `self_attn.indexer.wq_b` / `wk` | 所有 78 层 | indexer 查询/键投影 |
-| `self_attn.indexer.k_norm` (weight+bias) | 所有 78 层 | indexer 键归一化 |
-| `self_attn.indexer.weights_proj` | 所有 78 层 | indexer 权重投影 |
-| `layers.78.eh_proj.weight` | 仅 layer 78 (MTP) | embed-to-hidden 投影 |
-| `layers.78.enorm.weight` / `hnorm.weight` | 仅 layer 78 (MTP) | DSA 层归一化 |
-| `layers.78.shared_head.norm.weight` | 仅 layer 78 (MTP) | 共享头归一化 |
+| (a) 构建 SGLang 参考对比 | 本机有 SGLang 源码 `/ceph/.../sglang`。建 SGLang、跑同一 checkpoint、dump 逐层/逐权重中间值，与 vLLM diff，精确定位分歧点 | 最可靠，但工作量大（需编译 SGLang + GPU） |
+| (b) 升级 vLLM | 查更新版 vLLM 是否有**真正实现** GLM-5.2 MLA（而非空壳继承 DeepseekV2），再把 AFD 的 patch 前移 | 若新版有正解则最省事；AFD patch 前移有成本 |
+| (c) 深挖 vLLM MLA/FP8 attention | 审计 vLLM 0.19.1 对 GLM `head_dim=192`/`q_lora_rank=2048`/FP8 fused_qkv_a_proj scale 的处理 | 定向但可能耗时 |
 
-没有这些权重参与计算，attention 部分产出垃圾 hidden states → FFN 输出乱码。
-
-### 4.3 注意
-
-vLLM 日志中确实选择了 `DEEPSEEK_V32_INDEXER` 和 `FLASHMLA_SPARSE` attention
-backend，说明 vLLM 的 attention 层级有部分 DSA awareness。但
-**模型类层级没有 indexer 模块定义**，所以即使 backend 存在，也没有地方
-加载和使用 indexer 权重。问题在 model class，不在 attention backend。
-
-### 4.4 关键架构参数（来自 config.json）
-
-```json
-{
-  "architectures": ["GlmMoeDsaForCausalLM"],
-  "model_type": "deepseek_v3",
-  "head_dim": 192,
-  "index_head_dim": 128,
-  "index_n_heads": 32,
-  "index_topk": 2048,
-  "indexer_rope_interleave": true,
-  "indexer_types": ["full","full","full","shared","shared",...],
-  "num_hidden_layers": 78,
-  "num_nextn_predict_layers": 1,
-  "n_routed_experts": 256,
-  "moe_intermediate_size": 2048,
-  "kv_lora_rank": 512,
-  "q_lora_rank": 2048,
-  "qk_nope_head_dim": 192,
-  "qk_rope_head_dim": 64,
-  "quantization_config": {"quant_method": "w4afp8"}
-}
-```
+**对"升级 vLLM vs 实现 DSA"的回答**：两者都不直接解决——阻塞点是 vLLM 对 GLM-5.2
+的**数值正确性**（与 AFD 无关，单实例也复现）。核心问题是 vLLM 能否正确跑
+GLM-5.2-W4AFP8。建议先做 (a) 或 (b) 确认 vLLM 层能否跑对，再谈 AFD 集成。
 
 ---
 
-## 5. 如何复现当前问题
-
-### 5.1 同步代码到实验机
+## 7. 复现
 
 ```bash
-# 在开发本机 (/home/lychee/mycode/afd-plugin)
-rsync -avz --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='.venv' \
-  afd_plugin/ experiment/scripts/ \
-  root@gpu-host:/data1/afd-plugin/
-ssh root@gpu-host 'docker exec afd-exp pip install -e /workspace/afd-plugin --no-deps --no-build-isolation'
-```
+# 同步（本机→gpu-host）
+scp afd_plugin/quantization/w4afp8.py afd_plugin/model_executor/models/deepseek_v2.py \
+    root@gpu-host:/data1/afd-plugin/afd_plugin/...   # 按路径分别 scp
 
-### 5.2 启动 4A4F
-
-```bash
+# 启动 4A4F（真实目标配置）
 ssh root@gpu-host 'docker exec -d afd-exp bash /workspace/afd-plugin/experiment/scripts/start_glm52_w4afp8_4a4f.sh'
-```
+# 等 ~5min，两侧 "Application startup complete"
 
-脚本内容要点：
-- Attention: `CUDA_VISIBLE_DEVICES=0,1,2,3`，TP=4，端口 18000
-- FFN: `CUDA_VISIBLE_DEVICES=4,5,6,7`，TP=4，端口 18001
-- 共同: `--quantization w4afp8 --enforce-eager --max-model-len 8192`
-- AFD connector: `P2pNcclAFDConnector` port 6252
-- 环境变量: `PYTHONPATH=/workspace/afd-plugin VLLM_PLUGINS=afd`
-
-### 5.3 等待就绪（约 5 分钟）
-
-```bash
-# 查看进度
-ssh root@gpu-host 'docker exec afd-exp bash -c "tail -n 5 /workspace/afd-plugin/experiment/logs/glm52_w4afp8_attn.log"'
-# 看到 "Application startup complete" 即就绪
-```
-
-### 5.4 复现乱码
-
-```bash
+# 发请求（当前仍乱码，MoE 已修，剩 attention/数值问题）
 ssh root@gpu-host 'docker exec afd-exp curl -s http://127.0.0.1:18000/v1/completions \
   -H "Content-Type: application/json" \
   -d "{\"model\":\"glm52-afd-attn\",\"prompt\":\"Hello, my name is\",\"max_tokens\":32,\"temperature\":0}"'
-# 输出: "odeskodeskodesk..."
-```
 
-### 5.5 清场
-
-```bash
-ssh root@gpu-host 'docker exec afd-exp bash -c "kill -9 \$(pgrep -f \"[V]LLM::\") 2>/dev/null; pkill -9 -f \"[v]llm serve\" 2>/dev/null; sleep 3; nvidia-smi --query-gpu=index,memory.used --format=csv,noheader"'
+# 清场
+ssh root@gpu-host 'docker exec afd-exp bash -c "pkill -9 -f \"[v]llm serve\"; sleep 3; nvidia-smi --query-gpu=index,memory.used --format=csv,noheader"'
 ```
 
 ---
 
-## 6. 下一步方向
-
-需要实现 `AFDGlmMoeDsaForCausalLM` 的 DSA 逻辑，使 indexer / eh_proj / enorm /
-hnorm / shared_head 等权重被正确加载和参与计算。
-
-**可能的路线**：
-
-1. **检查 vLLM 0.19.1 是否有更新的 DSA 实现**
-   - 上游 `GlmMoeDsaForCausalLM` 也是空壳 `pass`，但 attention backend
-     `DEEPSEEK_V32_INDEXER` 存在，说明 DSA 支持可能在 0.19.1 之后才完善。
-   - 检查 vLLM main 分支或更新版本是否有完整的 `GlmMoeDsaForCausalLM` 实现。
-
-2. **在 AFD plugin 中实现 DSA model class**
-   - 基于上游 `DeepseekV2ForCausalLM` 结构，增加 indexer 模块定义
-   - 实现 `load_weights` 中对 indexer / eh_proj 等权重的加载
-   - DSA attention 的 forward 逻辑：indexer → top-k 稀疏选择 → MLA attention
-
-3. **评估是否需要自定义 attention backend 集成**
-   - vLLM 已有 `DEEPSEEK_V32_INDEXER` backend，但可能需要与 model class 配合
-
----
-
-## 7. 相关文件索引
+## 8. 相关文件
 
 | 文件 | 说明 |
 |---|---|
-| `experiment/W4AFP8_DESIGN.md` | W4AFP8 设计文档（含第 8 节实施结果） |
-| `experiment/SESSION_STATUS.md` | 本文件 |
-| `experiment/EXPERIMENT_ENV.md` | 实验环境说明 |
+| `afd_plugin/quantization/w4afp8.py` | W4AFP8Config + **remap 修复** + vLLM bug 补丁 |
+| `afd_plugin/model_executor/models/deepseek_v2.py:670+` | `load_weights` 中的 w4afp8 remap 钩子 |
+| `experiment/W4AFP8_DESIGN.md` | 设计文档（§3.1 dense-MLP 误标为 int4，实际是 FP8；只有 routed-expert 是 int4） |
 | `experiment/scripts/start_glm52_w4afp8_4a4f.sh` | 4A4F 启动脚本 |
-| `afd_plugin/quantization/w4afp8.py` | W4AFP8 配置 + vLLM bug 修复 |
-| `afd_plugin/__init__.py` | 注册入口 |
-| `afd_plugin/model_executor/models/deepseek_v2.py:919` | AFDGlmMoeDsaForCausalLM 空壳类 |
+| 本机记忆 | `~/.claude/projects/-ceph-.../memory/w4afp8-glm52-afd-debug.md`（完整调试轨迹） |
