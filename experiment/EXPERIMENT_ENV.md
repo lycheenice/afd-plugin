@@ -32,19 +32,36 @@
 | python | 容器内用 `python3` (`python` 不存在);vLLM CLI 入口 `vllm` 已就绪 |
 | 环境变量 | 跑 AFD 时必带 `-e PYTHONPATH=/workspace/afd-plugin -e VLLM_PLUGINS=afd` |
 
-## 代码同步
+## 三机分工与同步(2026-07-27 定,长期规则)
 
-本机工作区 `/home/lychee/mycode/afd-plugin` 是 git 仓库(主开发地)。
-改完代码后同步到 gpu-host 并重装:
+> 铁律:**gpu-host 的 GPU 归生产,跑实验前必须等用户明确"已停服务"再开始**,不要擅自停生产。
+
+| 机器 | 角色 | 说明 |
+|---|---|---|
+| **dev-host**(本机,`dev-host`,有 `/ceph`) | 权威编辑 | `/ceph/User/user/mycode/afd-plugin`,git branch `0724`。**不能 push github**(root key 未注册)。 |
+| **archive-host** | git 归档 + 推 github | `/home/lychee/mycode/afd-plugin`,origin SSH,`sudo -u lychee git push`。**用户指定的同步目标**:脚本/设计文档/代码/报告都同步到这里。无 rsync。 |
+| **gpu-host** | 实验执行机 | 见上表;容器 `afd-exp`,host `/data1/afd-plugin`→`/workspace/afd-plugin`。 |
+
+### 同步流(已验证)
 
 ```bash
-cd /home/lychee/mycode/afd-plugin
-rsync -avz --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' --exclude='.venv' \
-  afd_plugin/ experiment/scripts/ \
-  root@gpu-host:/data1/afd-plugin/   # 注意按子目录分别同步,保持 /data1 结构
-# 重装(容器内,改动才生效):
-ssh root@gpu-host 'docker exec afd-exp pip install -e /workspace/afd-plugin --no-deps --no-build-isolation'
+# 1) dev-host /ceph 编辑 + 提交
+cd /ceph/User/user/mycode/afd-plugin && git add -A && git commit -m "..."   # branch 0724
+
+# 2) → archive-host(dev-host 不能 push,用 git bundle 送过去由 archive-host 推 github)
+H6HEAD=$(ssh root@archive-host 'cd /home/lychee/mycode/afd-plugin && git rev-parse 0724')
+git bundle create /tmp/afd.bundle ${H6HEAD}..0724
+scp /tmp/afd.bundle root@archive-host:/tmp/afd.bundle
+ssh root@archive-host 'cd /home/lychee/mycode/afd-plugin && \
+  git fetch /tmp/afd.bundle 0724:refs/remotes/bundle/0724 && \
+  sudo -u lychee git merge --ff-only refs/remotes/bundle/0724 && \
+  sudo -u lychee git push origin 0724'
+
+# 3) → gpu-host 实验机(scp 改动的子目录;editable 安装,重启服务即生效,无需重装)
+scp -r afd_plugin/<改动路径> experiment/scripts/<改动脚本> root@gpu-host:/data1/afd-plugin/<对应路径>
 ```
+
+> 历史备注:早期文档误把 archive-host 当"本机"并用 rsync;实际编辑在 dev-host `/ceph`,archive-host 无 rsync,统一用 `scp`/`git bundle`。
 
 ## 跑实验
 
