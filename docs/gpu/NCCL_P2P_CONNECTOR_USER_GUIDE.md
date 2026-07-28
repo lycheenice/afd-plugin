@@ -8,6 +8,11 @@ Use this connector for CUDA deployments that disaggregate Attention and FFN work
 
 It supports both prefill and decode which all support eager mode. CUDA graph support is currently limited to `FULL_DECODE_ONLY`, which is mainly used in decode instance. The checked-in DeepSeek V2 Lite recipes cover colocated and prefill/decode-disaggregated deployments.
 
+For a code-level analysis of the current two-ubatch execution order, the
+difference between NCCL asynchronous submission and compute/communication
+overlap, and the reasons DBO may show no performance gain, see
+[NV GPU DBO execution and overlap analysis](NV_GPU_DBO_EXECUTION_ANALYSIS.md).
+
 
 ## How it works
 

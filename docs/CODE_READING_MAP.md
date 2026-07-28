@@ -2,10 +2,11 @@
 
 > 本文是一份"阅读地图"（reading map），目的是帮助读者在最短时间内建立对
 > `afd-plugin` 仓库的整体心智模型：它是什么、代码怎么分层、执行流怎么走、历史怎么
-> 演进过来的。**它是讨论实现细节的起点，不是最终的实现文档。** 标注 `⚠️待确认`
-> 的地方是我从代码结构推断、但尚需与你确认的点。
+> 演进过来的。**它是讨论实现细节的起点，不是最终的实现文档。** 会话中逐项核对的
+> 架构与性能结论收录在
+> [AFD 架构讨论与实现发现](AFD_ARCHITECTURE_DISCUSSION.md)。
 >
-> 最后更新对应提交：`ea7c56a`（main，共 404 次提交）。
+> 最后核对：2026-07-28，基于当前 `0724` 分支工作树及其配套 vLLM 源码。
 
 ---
 
@@ -182,8 +183,7 @@ Attention 计算和 FFN（MoE）计算拆到不同的进程/设备角色上，�
 
 ## 3. 端到端执行流（叙事版）
 
-以 GPU P2P 同步连接器为例（`⚠️待确认`：以下是按契约与命名推断的时序，细节需对代码
-逐一核对）：
+以 GPU P2P 同步连接器为例，代码核对后的时序如下：
 
 **启动期**
 1. vLLM 加载插件 → `register_afd()` 应用补丁、注册 `AFD*` 模型架构。
@@ -193,9 +193,9 @@ Attention 计算和 FFN（MoE）计算拆到不同的进程/设备角色上，�
    `init_afd_connector()` 建进程组/通信器。
 
 **推理期（每层/每 stage）**
-4. Attention 侧算完注意力 → `send_attn_output(hidden_states, context)` 发到 FFN。
-5.（可选）控制平面：Attention 侧 `send_dp_metadata_list`，FFN 侧
-   `recv_dp_metadata_list` + `update_state_from_dp_metadata` 准备缓冲/形状。
+4. 每个 scheduler step 开始前，Attention 侧通过控制面发送 stage/DP token 数、
+   warmup 和 graph-capture 标志；FFN 侧接收并据此准备缓冲与 shape。
+5. Attention 侧每层算完注意力 → `send_attn_output(hidden_states, context)` 发到 FFN。
 6. FFN 侧 `recv_attn_output()` 拿到 `AFDA2FTransferPayload` → 算 MoE →
    `send_ffn_output(ffn_output, context)` 回传。
 7. Attention 侧 `recv_ffn_output(ref_tensor)` 拿回结果，继续后续层直到出 token。
@@ -289,24 +289,23 @@ graph 仅 `FULL_DECODE_ONLY`；GPU DBO+CUDA graph 仅限恰好两个 ubatch。
 
 ---
 
-## 8. 待与你确认 / 深入讨论的清单
+## 8. 已核对的专题结论
 
-以下是我在读代码时标记的、需要你补充或一起深入的点，可作为后续完善本文档的议程：
+此前待确认的问题已经逐项核对并整理到
+[AFD 架构讨论与实现发现](AFD_ARCHITECTURE_DISCUSSION.md)，包括：
 
-1. **执行流细节**：第 3 节的时序是从契约推断的，需要对着
-   `attention_model_runner.py` / `ffn_model_runner.py` 逐层核对每层调用点。
-2. **控制平面 vs 接收循环**：`AFDControlPlane` 为 `None` 与非 `None` 两种驱动模式
-   分别对应哪些连接器、FFN 侧循环具体长什么样。
-3. **DBO / ubatch**：`dbo.py` yield custom op 的机制、与 CUDA graph "恰好两个
-   ubatch" 约束的关系。
-4. **NPU 异步路径**：`CAMAsyncAFDConnector` 的 `AFDAsyncFFNWorkItem` 工作队列模型、
-   与 `async_dp_engine` 补丁的协作。
-5. **`compute_gate_on_attention`**：gate 放在 Attention 侧计算的取舍与数据路径影响。
-6. **拓扑与 rank 排布**：`distributed/topology.py` 中 FFN/Attention rank 排序规则
-   与各连接器的 `world_rank` 计算差异。
-7. **原生算子**：`csrc/npu` 的 a2e/e2a 算子接口与 Python 侧 `compat/npu/ops.py`
-   的绑定关系。
+1. `vllm.general_plugins` 的设计、加载范围和现有用途；
+2. AFD EngineCore patch 与 vLLM 原生代码边界；
+3. A→F→A 启动、控制面和逐层数据面时序；
+4. A/F 之间的 activation、routing、quant 和 graph metadata；
+5. TP/EP、同步 P2P 与 CAM async 的 dispatch/combine 位置；
+6. 通信前按 expert 拆 token 的字节、hop 与 top-k 复制权衡；
+7. `csrc/npu` a2e/e2a 的职责及新厂商是否必须实现；
+8. P2P、Async Copy、完整 GPU Async 和 NV DBO 的实现差异。
+
+NV GPU DBO 的单独深挖见
+[NV GPU DBO execution and overlap analysis](gpu/NV_GPU_DBO_EXECUTION_ANALYSIS.md)。
 
 ---
 
-*本地图基于当前 `main` 分支静态阅读整理，随讨论逐步细化为完整代码阅读文档。*
+*本地图基于当前仓库与配套 vLLM 静态阅读整理；性能结论以远程目标环境实测为准。*
