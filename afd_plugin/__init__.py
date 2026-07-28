@@ -103,6 +103,17 @@ def register_afd() -> None:
             exc_info=True,
         )
 
+    # Independent of the AFD-async patches above (which may not apply on newer
+    # vLLM): enable native (non-AFD) GLM-5.2-W4AFP8 loading by remapping the
+    # routed-expert checkpoint keys in DeepseekV2ForCausalLM.load_weights.
+    try:
+        import afd_plugin.compat.patches.w4afp8_native_load_weights  # noqa: F401
+    except Exception:
+        _logger.debug(
+            "AFD plugin: w4afp8 native load_weights patch could not be applied",
+            exc_info=True,
+        )
+
     try:
         from afd_plugin.v1.worker.dbo import register_dbo_yield_custom_op
 
