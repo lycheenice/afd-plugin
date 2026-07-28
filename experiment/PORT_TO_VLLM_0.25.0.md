@@ -72,3 +72,41 @@ vllm serve /models/GLM-5.2-W4AFP8 --tensor-parallel-size 8 --enable-expert-paral
 
 ## 已修改文件(本夜)
 - `afd_plugin/quantization/w4afp8.py`:#1 MoE 层类→RoutedExperts;#2 CT-W4A8 import 路径。版本兼容(0.19.1/0.25.0 双向)。
+
+## Priority-1 修复(已实现,待今晚验证)
+- **新增 `afd_plugin/compat/patches/w4afp8_native_load_weights.py`**:monkeypatch
+  `DeepseekV2ForCausalLM.load_weights`(GlmMoeDsa 继承之),quant==w4afp8 时先应用
+  `remap_w4afp8_moe_checkpoint_weights` 再 delegate。解决故障 #5(native 路径不走 AFD wrapper → remap 未应用)。
+  remap 幂等(第二遍 key 已 `.weight_packed`/dtype int32 → no-op),与 0.19.1 AFD wrapper 共存安全。已在 register_afd 独立 try/except 注册。
+- 验证脚本:`experiment/scripts/port_v25_setup_and_serve.sh`(建 afd-v25 容器+装+起 native W4AFP8)+ `port_v25_smoke.sh`(greedy 冒烟+判读)。
+- **今晚测试预案**:①停 SGLang → ②`bash port_v25_setup_and_serve.sh` → ③`bash port_v25_smoke.sh`
+  → ④若输出连贯(France→Paris)= Priority-1 达成;若仍 KeyError/乱码,查下一故障(可能 `make_expert_params_mapping` 后缀逻辑 / 数值)。
+
+## Priority-2 scoping:AFD 拆分栈 vs 0.25.0(静态依赖清单,73 项/12 文件)
+**最高风险 = 11 处 monkeypatch(目标签名若变则静默失效/崩)**:
+- `compat/patches/async_dp_engine.py`:`EngineCoreProc.run_engine_core`、`{engine.utils,core_client}.launch_core_engines`、`DPAsyncMPClient.add_request_async`(`vllm.v1.engine.*`)。
+- `compat/patches/async_dp_forward_context.py`:`forward_context.set_forward_context`。
+- `compat/patches/config_validation.py`:`EngineArgs.create_engine_config`、`VllmConfig.__post_init__`。
+- `compat/patches/engine_core.py`:`EngineCore.__init__/_initialize_kv_caches/shutdown`、`EngineCoreProc.run_busy_loop`、`DPEngineCoreProc.run_busy_loop`。
+**5 处 subclass**:`AFD{Attention,FFN}Worker`←`v1.worker.gpu_worker.Worker`;`AFDAttentionModelRunner`←`gpu_model_runner.GPUModelRunner`;`GPUFFNModelRunner`←`lora_model_runner_mixin.LoRAModelRunnerMixin`;`P2pNcclAFDConnector`←插件 base。
+**引用最密集的 vLLM 模块(改动面)**:`vllm.v1.engine.core`(11)、`vllm.config`(9)、`vllm.v1.worker.*`(8)、`vllm.forward_context`(8)、`vllm.distributed.parallel_state`(5)。
+**评估**:`compat/patches`(尤其 engine_core / async_dp)是最难、最脆的一块(hook 引擎/DP 内部,0.19.1→0.25.0 引擎重构面大);worker/connector subclass 次之。逐项 OK/MOVED/CHANGED 分类见下节(静态核对中)。
+
+## Priority-2 差异分类(静态核对 0.25.0,2026-07-28)
+**结构全部存活**——11 处猴补丁目标 + 5 处 subclass 基类在 0.25.0 均在原路径:
+| vLLM 符号 | 0.25.0 位置 | 状态 |
+|---|---|---|
+| EngineCore / EngineCoreProc / DPEngineCoreProc | v1/engine/core.py:96/896/1745 | OK(路径同) |
+| EngineCore._initialize_kv_caches / .shutdown / run_engine_core / run_busy_loop | core.py:240/644/1154/1259,DP:1925 | OK(路径同,**签名待逐个核对**) |
+| launch_core_engines | v1/engine/utils.py:1072 | OK |
+| forward_context.set_forward_context | forward_context.py:260 | OK(签名待核对) |
+| EngineArgs.create_engine_config | engine/arg_utils.py:1829 | OK |
+| VllmConfig.__post_init__ | config/vllm.py:916 | OK(0.19.1 路径 `config.vllm` 仍在) |
+| gpu_worker.Worker / gpu_model_runner.GPUModelRunner / lora_model_runner_mixin.LoRAModelRunnerMixin | 原路径 | OK |
+
+**结论**:AFD 拆分栈移植 = **对 ~11 猴补丁 + 5 subclass 逐个核对 0.25.0 的函数签名/行为并再对齐**,
+非结构性重写。风险点从"目标不存在"降为"签名/内部行为变化"(需 diff 0.19.1↔0.25.0 各被 patch 函数体)。
+完整依赖清单(73 项/12 文件)见本次会话静态分析(imports 57 / subclass 5 / monkeypatch 11)。
+
+> 备注:本移植为**纯插件侧**改动;vLLM 0.25.0 **原样使用、未改源码**(0.25.0 已原生支持 GLM-5.2 架构)。
+> 若后续发现需改 vLLM 源码,将单列 "vLLM 改造" 文档记录。
