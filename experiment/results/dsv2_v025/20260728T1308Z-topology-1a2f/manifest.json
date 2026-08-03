@@ -1,0 +1,17 @@
+{
+  "run_id": "20260728T1308Z-topology-1a2f",
+  "status": "functional_failed",
+  "correctness_result": "not_run",
+  "prompt_requests_sent": 0,
+  "topology": "1A2F",
+  "mode": "eager",
+  "root_cause_location": "vllm/model_executor/layers/fused_moe/prepare_finalize/naive_dp_ep.py:158",
+  "root_cause": "FFN DP/EP rank 1 received an undersized sizes list and raised IndexError at sizes[rank_in_group]",
+  "host": "redacted-host",
+  "git_head": "9d6aa37c452a4a44722a4d5cc58a17c67f6a4783",
+  "vllm": "0.25.0",
+  "model": "/models/DeepSeek-V2-Lite",
+  "artifacts": [
+    "prompt-smoke.log"
+  ]
+}

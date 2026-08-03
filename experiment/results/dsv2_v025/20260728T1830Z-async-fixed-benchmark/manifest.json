@@ -1,0 +1,13 @@
+{
+  "run_id": "20260728T1830Z-async-fixed-benchmark",
+  "scope": "DeepSeek-V2-Lite-only",
+  "category": "async-performance",
+  "topology": "1A1F",
+  "mode": "eager",
+  "dbo": true,
+  "async_transfer": true,
+  "outcome": "correctness_passed_performance_gate_failed",
+  "semantic_reference_match_before": true,
+  "semantic_reference_match_after": true,
+  "gpu_devices": [5, 6]
+}

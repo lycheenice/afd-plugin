@@ -3,6 +3,7 @@
 """Compatibility helpers for the target vLLM runtime."""
 
 from afd_plugin.compat.vllm import (
+    SUPPORTED_VLLM_VERSIONS,
     TARGET_VLLM_VERSION,
     assert_vllm_version_supported,
     get_installed_vllm_version,
@@ -10,6 +11,7 @@ from afd_plugin.compat.vllm import (
 )
 
 __all__ = [
+    "SUPPORTED_VLLM_VERSIONS",
     "TARGET_VLLM_VERSION",
     "assert_vllm_version_supported",
     "get_installed_vllm_version",

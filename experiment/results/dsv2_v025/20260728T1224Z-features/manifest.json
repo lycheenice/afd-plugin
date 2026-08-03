@@ -1,0 +1,8 @@
+{
+  "run_id": "20260728T1224Z-features",
+  "status": "runner_preflight_failed",
+  "gpu_tests_started": false,
+  "collected_tests": 8,
+  "reason": "pytest 9 compact collection output was not recognized by the initial runner counter",
+  "artifact": "../../../logs/dsv2_v025/20260728T1224Z-features/pytest-collect.log"
+}

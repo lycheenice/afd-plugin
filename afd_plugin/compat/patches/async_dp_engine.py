@@ -39,7 +39,7 @@ from vllm.v1.engine import EngineCoreRequestType
 from vllm.v1.engine.core import EngineCoreProc
 from vllm.v1.engine.core_client import DPAsyncMPClient
 
-from afd_plugin.compat.vllm import TARGET_VLLM_VERSION
+from afd_plugin.compat.vllm import is_vllm_version_supported
 from afd_plugin.config import is_afd_async_dp, parse_optional_afd_config
 
 if TYPE_CHECKING:
@@ -383,7 +383,7 @@ def _is_target_vllm_compatible() -> bool:
     version_text = str(version_value)
     if "dev" in version_text:
         return True
-    return version_text.startswith(TARGET_VLLM_VERSION)
+    return is_vllm_version_supported(version_text)
 
 
 if _is_target_vllm_compatible():

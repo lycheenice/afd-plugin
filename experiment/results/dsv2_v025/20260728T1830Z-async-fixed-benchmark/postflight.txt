@@ -1,0 +1,5 @@
+1108089, GPU-REDACTED, /home/REDACTED/.../oneDevicePerfForQACE, 2756 MiB
+1108090, GPU-REDACTED, /home/REDACTED/.../oneDevicePerfForQACE, 19140 MiB
+1108091, GPU-REDACTED, /home/REDACTED/.../oneDevicePerfForQACE, 19140 MiB
+1108092, GPU-REDACTED, /home/REDACTED/.../oneDevicePerfForQACE, 19140 MiB
+932956, GPU-REDACTED, /usr/local/nvshmem/bin/perftest/host/pt-to-pt/stream_latency, 2248 MiB

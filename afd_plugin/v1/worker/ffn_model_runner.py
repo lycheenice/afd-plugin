@@ -125,7 +125,12 @@ class GPUFFNModelRunner(LoRAModelRunnerMixin):
     def get_kv_cache_spec(self) -> dict[str, KVCacheSpec]:
         return {}
 
-    def initialize_kv_cache(self, kv_cache_config: KVCacheConfig) -> None:
+    def initialize_kv_cache(
+        self,
+        kv_cache_config: KVCacheConfig,
+        is_profiling: bool = False,
+    ) -> None:
+        del kv_cache_config, is_profiling
         return None
 
     def execute_model(
@@ -176,6 +181,17 @@ class GPUFFNModelRunner(LoRAModelRunnerMixin):
         rank_ffn_output = None
         num_layers = max(int(self.num_layers or 0), 1)
         stage_ids = sorted(int(stage_idx) for stage_idx in dp_metadata_list) or [0]
+        ffn_dp_metadata_list = {
+            stage_idx: _make_ffn_dp_metadata(
+                dp_metadata_list[stage_idx],
+                attention_size=int(self.afd_config.num_attention_ranks),
+                ffn_size=int(self.afd_config.num_ffn_ranks),
+                ffn_dp_size=int(
+                    self.vllm_config.parallel_config.data_parallel_size,
+                ),
+            )
+            for stage_idx in stage_ids
+        }
         with _ffn_forward_context(self.vllm_config) as forward_context:
             for layer_idx in range(num_layers):
                 for stage_idx in stage_ids:
@@ -186,9 +202,9 @@ class GPUFFNModelRunner(LoRAModelRunnerMixin):
                     metadata.layer_idx = layer_idx
                     metadata.stage_idx = stage_idx
                     if forward_context is not None:
-                        forward_context.dp_metadata = dp_metadata_list.get(
-                            metadata.stage_idx,
-                        )  # type: ignore
+                        forward_context.dp_metadata = ffn_dp_metadata_list[
+                            metadata.stage_idx
+                        ]
                         forward_context.additional_kwargs["afd_metadata"] = metadata
                         _set_moe_layer_index(forward_context, layer_idx)
                     rank_ffn_output = self._execute_eager_mode(hidden_states, layer_idx)
@@ -366,6 +382,76 @@ def _make_dp_metadata_payload(
         is_graph_capturing=is_graph_capturing,
         is_warmup=is_warmup,
     )
+
+
+def _make_ffn_dp_metadata(
+    attention_metadata: DPMetadata | AFDDPMetadata,
+    *,
+    attention_size: int,
+    ffn_size: int,
+    ffn_dp_size: int,
+) -> AFDDPMetadata:
+    """Map Attention token counts to the FFN DP layout used by vLLM MoE."""
+    attention_counts = [
+        max(1, int(value))
+        for value in torch.as_tensor(
+            attention_metadata.num_tokens_across_dp_cpu,
+            device="cpu",
+        )
+        .flatten()
+        .tolist()
+    ]
+    if not attention_counts:
+        raise ValueError("Attention token metadata cannot be empty")
+    if attention_size % len(attention_counts) != 0:
+        raise ValueError(
+            "Attention token metadata cannot be expanded to AFD ranks: "
+            f"counts={len(attention_counts)}, attention_size={attention_size}",
+        )
+
+    attention_tp_size = attention_size // len(attention_counts)
+    attention_role_counts = [
+        attention_counts[rank // attention_tp_size] for rank in range(attention_size)
+    ]
+
+    if attention_size >= ffn_size:
+        if attention_size % ffn_size != 0:
+            raise ValueError(
+                "Attention ranks cannot be grouped onto FFN ranks: "
+                f"attention_size={attention_size}, ffn_size={ffn_size}",
+            )
+        attention_ranks_per_ffn = attention_size // ffn_size
+        ffn_role_counts = [
+            sum(
+                attention_role_counts[
+                    rank * attention_ranks_per_ffn : (rank + 1)
+                    * attention_ranks_per_ffn
+                ],
+            )
+            for rank in range(ffn_size)
+        ]
+    else:
+        if ffn_size % attention_size != 0:
+            raise ValueError(
+                "FFN ranks cannot be grouped onto Attention ranks: "
+                f"attention_size={attention_size}, ffn_size={ffn_size}",
+            )
+        ffn_ranks_per_attention = ffn_size // attention_size
+        ffn_role_counts = [
+            attention_role_counts[rank // ffn_ranks_per_attention]
+            for rank in range(ffn_size)
+        ]
+
+    if ffn_size % ffn_dp_size != 0:
+        raise ValueError(
+            "FFN role ranks cannot be projected to vLLM DP ranks: "
+            f"ffn_size={ffn_size}, ffn_dp_size={ffn_dp_size}",
+        )
+    ffn_tp_size = ffn_size // ffn_dp_size
+    ffn_dp_counts = [
+        ffn_role_counts[dp_rank * ffn_tp_size] for dp_rank in range(ffn_dp_size)
+    ]
+    return AFDDPMetadata(num_tokens_across_dp_cpu=ffn_dp_counts)
 
 
 __all__ = ["GPUFFNModelRunner"]

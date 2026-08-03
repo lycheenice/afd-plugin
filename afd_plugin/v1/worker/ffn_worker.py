@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Any
 import torch
 from vllm.v1.worker.gpu_worker import Worker
 
+try:
+    from vllm.v1.worker.worker_base import CompilationTimes
+except ImportError:
+    CompilationTimes = float
+
 from afd_plugin.model_executor.models.model_utils import get_afd_model_config
 from afd_plugin.v1.worker.attention_model_runner import fail_if_unsupported_ubatching
 from afd_plugin.v1.worker.ffn_model_runner import GPUFFNModelRunner
@@ -76,12 +81,14 @@ class AFDFFNWorker(Worker):
         self.model_runner.initialize_afd_connector()
         self.start_ffn_server_loop()
 
-    def compile_or_warm_up_model(self) -> float:
+    def compile_or_warm_up_model(self) -> CompilationTimes:
         """FFN workers perform no warmup/capture; model execution is driven
         entirely by connector metadata.
         """
 
-        return 0.0
+        if CompilationTimes is float:
+            return 0.0
+        return CompilationTimes(language_model=0.0, encoder=0.0)
 
     def execute_model(self, scheduler_output: SchedulerOutput) -> None:
         """Fail fast if the default scheduler tries to execute FFN work."""

@@ -1,0 +1,53 @@
+{
+  "comm_heavy_c64": {
+    "workload": {
+      "input_len": 512,
+      "output_len": 128,
+      "max_concurrency": 64,
+      "num_prompts": 64,
+      "num_warmups": 8,
+      "repetitions": 3
+    },
+    "semantic_reference_match_before": true,
+    "semantic_reference_match_after": true,
+    "output_throughput": {
+      "sync_mean": 588.7659962072635,
+      "async_mean": 560.052699434445,
+      "async_vs_sync_percent": -4.876860579208875
+    },
+    "mean_tpot_ms": {
+      "sync_mean": 103.57111205668934,
+      "async_mean": 109.70805731144144,
+      "async_vs_sync_percent": 5.925344560743007
+    },
+    "performance_gate_passed": false
+  },
+  "fixed_c16": {
+    "workload": {
+      "input_len": 128,
+      "output_len": 64,
+      "max_concurrency": 16,
+      "num_prompts": 64,
+      "num_warmups": 8,
+      "repetitions": 3
+    },
+    "semantic_reference_match_before": true,
+    "semantic_reference_match_after": true,
+    "output_throughput": {
+      "sync_mean": 149.32597298635855,
+      "async_mean": 144.19966511876547,
+      "async_vs_sync_percent": -3.4329646511403578
+    },
+    "mean_tpot_ms": {
+      "sync_mean": 102.47121521118702,
+      "async_mean": 107.22112362545597,
+      "async_vs_sync_percent": 4.635358724379013
+    },
+    "performance_gate_passed": false
+  },
+  "gate": {
+    "target_throughput_gain_percent": 10.0,
+    "target_tpot_reduction_percent": 10.0,
+    "passed": false
+  }
+}

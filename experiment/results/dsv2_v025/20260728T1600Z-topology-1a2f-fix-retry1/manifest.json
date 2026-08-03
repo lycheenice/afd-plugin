@@ -1,0 +1,9 @@
+{
+  "run_id": "20260728T1600Z-topology-1a2f-fix-retry1",
+  "scope": "DeepSeek-V2-Lite-only",
+  "category": "semantic-topology",
+  "topology": "1A2F",
+  "outcome": "infra_failure",
+  "reason": "tests.e2e was not importable in the launch environment",
+  "prompt_requests_sent": 0
+}

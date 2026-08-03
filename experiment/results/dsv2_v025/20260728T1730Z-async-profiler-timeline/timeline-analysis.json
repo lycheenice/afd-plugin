@@ -1,0 +1,58 @@
+{
+  "async_attention": {
+    "communication_streams": ["25", "29", "37"],
+    "communication_union_us": 203443.44873046875,
+    "compute_communication_overlap_us": 1071.0732421875,
+    "compute_streams": ["21"],
+    "compute_union_us": 4089.8828125,
+    "shared_compute_communication_streams": [],
+    "stream_kernel_counts": {
+      "21": {"communication_kernels": 0, "compute_kernels": 1018},
+      "25": {"communication_kernels": 81, "compute_kernels": 0},
+      "29": {"communication_kernels": 81, "compute_kernels": 0},
+      "37": {"communication_kernels": 4, "compute_kernels": 0}
+    },
+    "trace": "experiment/results/dsv2_v025/20260728T1730Z-async-profiler-timeline/attn/redacted-host_108508.1785259850042554147.pt.trace.json"
+  },
+  "async_ffn": {
+    "communication_streams": ["25", "29", "33"],
+    "communication_union_us": 1311644.3125,
+    "compute_communication_overlap_us": 135616.43994140625,
+    "compute_streams": ["7"],
+    "compute_union_us": 501269.94140625,
+    "shared_compute_communication_streams": [],
+    "stream_kernel_counts": {
+      "25": {"communication_kernels": 108, "compute_kernels": 0},
+      "29": {"communication_kernels": 108, "compute_kernels": 0},
+      "33": {"communication_kernels": 4, "compute_kernels": 0},
+      "7": {"communication_kernels": 0, "compute_kernels": 1780}
+    },
+    "trace": "experiment/results/dsv2_v025/20260728T1730Z-async-profiler-timeline/ffn/redacted-host_108515.1785259847467250643.pt.trace.json"
+  },
+  "sync_attention": {
+    "communication_streams": ["21", "29"],
+    "communication_union_us": 334093.36181640625,
+    "compute_communication_overlap_us": 0.0,
+    "compute_streams": ["21"],
+    "compute_union_us": 4072.65234375,
+    "shared_compute_communication_streams": ["21"],
+    "stream_kernel_counts": {
+      "21": {"communication_kernels": 162, "compute_kernels": 1018},
+      "29": {"communication_kernels": 4, "compute_kernels": 0}
+    },
+    "trace": "experiment/results/dsv2_v025/20260728T1723Z-sync-profiler-timeline/attn/redacted-host_106469.1785259713533432597.pt.trace.json"
+  },
+  "sync_ffn": {
+    "communication_streams": ["25", "7"],
+    "communication_union_us": 1136194.4506835938,
+    "compute_communication_overlap_us": 0.0,
+    "compute_streams": ["7"],
+    "compute_union_us": 464194.7265625,
+    "shared_compute_communication_streams": ["7"],
+    "stream_kernel_counts": {
+      "25": {"communication_kernels": 4, "compute_kernels": 0},
+      "7": {"communication_kernels": 216, "compute_kernels": 1780}
+    },
+    "trace": "experiment/results/dsv2_v025/20260728T1723Z-sync-profiler-timeline/ffn/redacted-host_106462.1785259710036744149.pt.trace.json"
+  }
+}

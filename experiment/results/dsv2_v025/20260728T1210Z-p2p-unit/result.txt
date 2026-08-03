@@ -1,0 +1,8 @@
+status=passed
+host=redacted-host
+container=afd-v025-validate
+git_commit=9d6aa37c452a4a44722a4d5cc58a17c67f6a4783
+vllm_version=0.25.0
+test_path=tests/unit/connectors/test_p2p_connector.py
+result=25 passed
+notes=pytest cache warning only because /workspace/afd-plugin is mounted read-only

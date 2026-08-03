@@ -1,0 +1,241 @@
+{
+  "model": "/models/DeepSeek-V2-Lite",
+  "topology": "1A1F",
+  "mode": "eager",
+  "dbo": true,
+  "async_transfer": true,
+  "vllm_version": "0.25.0",
+  "workload": {
+    "num_prompts": 64,
+    "num_warmups": 8,
+    "max_concurrency": 64,
+    "input_len": 512,
+    "output_len": 128,
+    "repetitions": 3
+  },
+  "semantic_before": [
+    {
+      "prompt": "The capital of France is",
+      "text": " Paris.\nThe currency of France is the Euro.\nThe languages spoken in",
+      "required_prefix": "paris",
+      "required_fragments": [
+        "paris"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 5,
+        "total_tokens": 21,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "prompt": "1 + 1 =",
+      "text": " 2\n\n2 + 1 = 3\n\n3 + ",
+      "required_prefix": "2",
+      "required_fragments": [
+        "2"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 5,
+        "total_tokens": 21,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "prompt": "San Francisco is a",
+      "text": " city of neighborhoods, and each one has its own unique character. From the bustling",
+      "required_prefix": "city",
+      "required_fragments": [
+        "city",
+        "neighborhood"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 4,
+        "total_tokens": 20,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "prompt": "Write a Python function that adds two integers:",
+      "text": "\ndef add(a, b):\n    return a + b\n\n",
+      "required_prefix": "def ",
+      "required_fragments": [
+        "def ",
+        "return",
+        "+"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 9,
+        "total_tokens": 25,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    }
+  ],
+  "semantic_after": [
+    {
+      "prompt": "The capital of France is",
+      "text": " Paris.\nThe currency of France is the Euro.\nThe languages spoken in",
+      "required_prefix": "paris",
+      "required_fragments": [
+        "paris"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 5,
+        "total_tokens": 21,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "prompt": "1 + 1 =",
+      "text": " 2\n\n2 + 1 = 3\n\n3 + ",
+      "required_prefix": "2",
+      "required_fragments": [
+        "2"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 5,
+        "total_tokens": 21,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "prompt": "San Francisco is a",
+      "text": " city of neighborhoods, and each one has its own unique character. From the bustling",
+      "required_prefix": "city",
+      "required_fragments": [
+        "city",
+        "neighborhood"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 4,
+        "total_tokens": 20,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "prompt": "Write a Python function that adds two integers:",
+      "text": "\ndef add(a, b):\n    return a + b\n\n",
+      "required_prefix": "def ",
+      "required_fragments": [
+        "def ",
+        "return",
+        "+"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 9,
+        "total_tokens": 25,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    }
+  ],
+  "reference": "/workspace/afd-plugin/experiment/results/dsv2_v025/20260728T1645Z-async-sync-reference/prompt-smoke.json",
+  "reference_match_before": true,
+  "reference_match_after": true,
+  "metrics": {
+    "request_throughput": {
+      "values": [
+        4.181360694948588,
+        4.515910277432748,
+        4.428964170613468
+      ],
+      "mean": 4.375411714331602,
+      "min": 4.181360694948588,
+      "max": 4.515910277432748
+    },
+    "output_throughput": {
+      "values": [
+        535.2141689534193,
+        578.0365155113917,
+        566.9074138385239
+      ],
+      "mean": 560.052699434445,
+      "min": 535.2141689534193,
+      "max": 578.0365155113917
+    },
+    "total_token_throughput": {
+      "values": [
+        2676.0708447670963,
+        2890.1825775569587,
+        2834.5370691926196
+      ],
+      "mean": 2800.263497172225,
+      "min": 2676.0708447670963,
+      "max": 2890.1825775569587
+    },
+    "mean_ttft_ms": {
+      "values": [
+        1233.7450645572972,
+        384.2421185981948,
+        391.55098574701697
+      ],
+      "mean": 669.8460563008363,
+      "min": 384.2421185981948,
+      "max": 1233.7450645572972
+    },
+    "median_ttft_ms": {
+      "values": [
+        1164.0037302859128,
+        386.62462355569005,
+        392.1221769414842
+      ],
+      "mean": 647.583510261029,
+      "min": 386.62462355569005,
+      "max": 1164.0037302859128
+    },
+    "p99_ttft_ms": {
+      "values": [
+        1583.8017028570175,
+        391.5055709518492,
+        429.943999815732
+      ],
+      "mean": 801.750424541533,
+      "min": 391.5055709518492,
+      "max": 1583.8017028570175
+    },
+    "mean_tpot_ms": {
+      "values": [
+        109.98286741146795,
+        108.51441618943345,
+        110.6268883334229
+      ],
+      "mean": 109.70805731144144,
+      "min": 108.51441618943345,
+      "max": 110.6268883334229
+    },
+    "median_tpot_ms": {
+      "values": [
+        110.43665250469967,
+        108.50092043044177,
+        110.6303250673777
+      ],
+      "mean": 109.85596600083971,
+      "min": 108.50092043044177,
+      "max": 110.6303250673777
+    },
+    "p99_tpot_ms": {
+      "values": [
+        113.29717573328456,
+        108.84923931240566,
+        110.84300812495152
+      ],
+      "mean": 110.99647439021392,
+      "min": 108.84923931240566,
+      "max": 113.29717573328456
+    }
+  }
+}

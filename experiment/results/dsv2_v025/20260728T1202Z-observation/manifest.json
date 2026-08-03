@@ -1,0 +1,46 @@
+{
+  "run_id": "20260728T1202Z-observation",
+  "status": "observation_passed",
+  "acceptance_scope": "manual semantic observation only; automated semantic assertions require rerun",
+  "host": "redacted-host",
+  "git": {
+    "branch": "0724",
+    "head": "9d6aa37c452a4a44722a4d5cc58a17c67f6a4783",
+    "working_tree": "dirty vLLM 0.25.0 migration workspace"
+  },
+  "container": {
+    "name": "afd-v025-validate",
+    "image": "docker.m.daocloud.io/vllm/vllm-openai:v0.25.0",
+    "image_id": "sha256:fc56161ee42a011aeee78b65d0a81b6683c7d04402fd40503d14d4d6c98f07cb"
+  },
+  "runtime": {
+    "python": "3.12.13",
+    "vllm": "0.25.0",
+    "torch": "2.11.0+cu130",
+    "cuda": "13.0",
+    "gpu_count": 8,
+    "gpu_model": "NVIDIA H20-3e",
+    "gpu_memory_mib": 143771,
+    "driver": "595.58.03"
+  },
+  "model": {
+    "path": "/models/DeepSeek-V2-Lite",
+    "size": "30G"
+  },
+  "case": {
+    "topology": "1A1F",
+    "mode": "eager",
+    "attention_devices": [
+      0
+    ],
+    "ffn_devices": [
+      1
+    ],
+    "max_tokens": 16,
+    "temperature": 0.0,
+    "prompt_count": 4
+  },
+  "artifacts": [
+    "prompt-smoke.json"
+  ]
+}

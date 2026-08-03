@@ -1,0 +1,22 @@
+{
+  "run_id": "20260728T1330Z-topology-4a4f",
+  "status": "passed",
+  "correctness_result": "4/4 automated semantic prompt checks passed",
+  "topology": "4A4F",
+  "mode": "eager",
+  "temperature": 0.0,
+  "max_tokens": 16,
+  "host": "redacted-host",
+  "git_head": "9d6aa37c452a4a44722a4d5cc58a17c67f6a4783",
+  "vllm": "0.25.0",
+  "model": "/models/DeepSeek-V2-Lite",
+  "postflight": {
+    "gpu_compute_processes": 0,
+    "live_experiment_processes": 0,
+    "listening_api_port": 0
+  },
+  "artifacts": [
+    "prompt-smoke.json",
+    "prompt-smoke.log"
+  ]
+}

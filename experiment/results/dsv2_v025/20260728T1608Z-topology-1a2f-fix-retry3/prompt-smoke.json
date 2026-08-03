@@ -1,0 +1,75 @@
+{
+  "model": "/models/DeepSeek-V2-Lite",
+  "topology": "1A2F",
+  "mode": "eager",
+  "dbo": false,
+  "async_transfer": false,
+  "reference": null,
+  "reference_match": null,
+  "vllm_version": "0.25.0",
+  "results": [
+    {
+      "prompt": "The capital of France is",
+      "text": " Paris.\nThe currency of France is the Euro.\nThe languages spoken in",
+      "required_prefix": "paris",
+      "required_fragments": [
+        "paris"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 5,
+        "total_tokens": 21,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "prompt": "1 + 1 =",
+      "text": " 2\n\n2 + 1 = 3\n\n3 + ",
+      "required_prefix": "2",
+      "required_fragments": [
+        "2"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 5,
+        "total_tokens": 21,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "prompt": "San Francisco is a",
+      "text": " city of neighborhoods, and each one has its own unique character. From the bustling",
+      "required_prefix": "city",
+      "required_fragments": [
+        "city",
+        "neighborhood"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 4,
+        "total_tokens": 20,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    },
+    {
+      "prompt": "Write a Python function that adds two integers:",
+      "text": "\n\ndef add(a, b):\n    return a + b\n",
+      "required_prefix": "def ",
+      "required_fragments": [
+        "def ",
+        "return",
+        "+"
+      ],
+      "finish_reason": "length",
+      "usage": {
+        "prompt_tokens": 9,
+        "total_tokens": 25,
+        "completion_tokens": 16,
+        "prompt_tokens_details": null
+      }
+    }
+  ]
+}

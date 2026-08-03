@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import deque
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("vllm")
 
+import afd_plugin.v1.worker.ffn_model_runner as ffn_model_runner_module
 from afd_plugin.connectors import (
     AFDA2FTransferPayload,
     AFDControlPayload,
@@ -19,6 +21,7 @@ from afd_plugin.connectors import (
 from afd_plugin.v1.worker.cuda_graph import make_ffn_graph_key
 from afd_plugin.v1.worker.ffn_model_runner import (
     GPUFFNModelRunner,
+    _make_ffn_dp_metadata,
     _set_moe_layer_index,
 )
 from afd_plugin.v1.worker.ffn_worker import AFDFFNWorker
@@ -112,6 +115,7 @@ def _runner_with_connector_and_model(model, *, num_layers=1):
         parallel_config=SimpleNamespace(
             data_parallel_size=1,
             is_moe_model=True,
+            use_sequence_parallel_moe=False,
         ),
         compilation_config=SimpleNamespace(
             fast_moe_cold_start=False,
@@ -119,6 +123,10 @@ def _runner_with_connector_and_model(model, *, num_layers=1):
         ),
     )
     runner.connector = _FakeConnector()
+    runner.afd_config = SimpleNamespace(
+        num_attention_ranks=1,
+        num_ffn_ranks=1,
+    )
     runner.model = model
     runner.num_layers = num_layers
     runner.use_cuda_graph = False
@@ -225,6 +233,80 @@ def test_ffn_runner_makes_original_style_graph_key():
     )
 
     assert key == ((0, (2, 3)), (1, (5, 7)))
+
+
+@pytest.mark.parametrize(
+    (
+        "attention_counts",
+        "attention_size",
+        "ffn_size",
+        "ffn_dp_size",
+        "expected_ffn_dp_counts",
+    ),
+    [
+        ([7], 1, 1, 1, [7]),
+        ([3, 5], 2, 1, 1, [8]),
+        ([7], 1, 2, 2, [7, 7]),
+        ([3, 5], 2, 4, 4, [3, 3, 5, 5]),
+        ([2, 3, 5, 7], 4, 4, 4, [2, 3, 5, 7]),
+        ([3, 5], 4, 4, 2, [3, 5]),
+        ([0, 4], 2, 1, 1, [5]),
+    ],
+)
+def test_make_ffn_dp_metadata_maps_supported_topologies(
+    attention_counts,
+    attention_size,
+    ffn_size,
+    ffn_dp_size,
+    expected_ffn_dp_counts,
+):
+    metadata = _make_ffn_dp_metadata(
+        _FakeDPMetadata(attention_counts),
+        attention_size=attention_size,
+        ffn_size=ffn_size,
+        ffn_dp_size=ffn_dp_size,
+    )
+
+    assert _tokens(metadata) == expected_ffn_dp_counts
+
+
+def test_make_ffn_dp_metadata_rejects_empty_attention_counts():
+    with pytest.raises(ValueError, match="cannot be empty"):
+        _make_ffn_dp_metadata(
+            _FakeDPMetadata([]),
+            attention_size=1,
+            ffn_size=1,
+            ffn_dp_size=1,
+        )
+
+
+def test_ffn_runner_uses_fanout_dp_metadata_in_forward_context(monkeypatch):
+    forward_context = SimpleNamespace(
+        dp_metadata=None,
+        additional_kwargs={},
+        all_moe_layers=[],
+    )
+
+    @contextmanager
+    def fake_ffn_forward_context(vllm_config):
+        del vllm_config
+        yield forward_context
+
+    monkeypatch.setattr(
+        ffn_model_runner_module,
+        "_ffn_forward_context",
+        fake_ffn_forward_context,
+    )
+    runner = _runner_with_connector_and_model(_FakeModel())
+    runner.vllm_config.parallel_config.data_parallel_size = 2
+    runner.afd_config.num_attention_ranks = 1
+    runner.afd_config.num_ffn_ranks = 2
+    metadata = _metadata()
+    runner.connector.attn_outputs.append(_payload("hidden", metadata))
+
+    runner.execute_model(dp_metadata_list={0: _FakeDPMetadata([7])})
+
+    assert _tokens(forward_context.dp_metadata) == [7, 7]
 
 
 def test_ffn_runner_replays_cuda_graph_when_key_exists():

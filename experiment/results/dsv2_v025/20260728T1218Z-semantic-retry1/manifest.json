@@ -1,0 +1,23 @@
+{
+  "run_id": "20260728T1218Z-semantic-retry1",
+  "status": "passed",
+  "correctness_result": "4/4 automated semantic prompt checks passed",
+  "host": "redacted-host",
+  "git_head": "9d6aa37c452a4a44722a4d5cc58a17c67f6a4783",
+  "container": "afd-v025-validate",
+  "vllm": "0.25.0",
+  "model": "/models/DeepSeek-V2-Lite",
+  "topology": "1A1F",
+  "mode": "eager",
+  "temperature": 0.0,
+  "max_tokens": 16,
+  "postflight": {
+    "gpu_compute_processes": 0,
+    "experiment_processes": 0,
+    "listening_experiment_ports": 0
+  },
+  "artifacts": [
+    "prompt-smoke.json",
+    "prompt-smoke.log"
+  ]
+}

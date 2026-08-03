@@ -1,0 +1,8 @@
+{
+  "run_id": "20260728T1226Z-features-retry1",
+  "status": "runner_preflight_failed",
+  "gpu_tests_started": false,
+  "collected_tests": 8,
+  "reason": "set -e treated zero legacy-format grep matches as fatal before pytest 9 count fallback",
+  "artifact": "../../../logs/dsv2_v025/20260728T1226Z-features-retry1/pytest-collect.log"
+}

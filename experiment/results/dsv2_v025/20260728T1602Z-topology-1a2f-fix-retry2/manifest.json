@@ -1,0 +1,9 @@
+{
+  "run_id": "20260728T1602Z-topology-1a2f-fix-retry2",
+  "scope": "DeepSeek-V2-Lite-only",
+  "category": "semantic-topology",
+  "topology": "1A2F",
+  "outcome": "infra_failure",
+  "reason": "VLLM_USE_V2_MODEL_RUNNER=0 was missing; Attention refused startup",
+  "prompt_requests_sent": 0
+}

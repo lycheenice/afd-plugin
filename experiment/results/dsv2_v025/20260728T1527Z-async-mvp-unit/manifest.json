@@ -1,0 +1,22 @@
+{
+  "run_id": "20260728T1527Z-async-mvp-unit",
+  "host": "redacted-host",
+  "container": "afd-v025-validate",
+  "code_copy": "/afd-v25/dsv2-unit-1346",
+  "model_scope": "DeepSeek-V2-Lite / vLLM 0.25.0",
+  "git_head": "9d6aa37c452a4a44722a4d5cc58a17c67f6a4783",
+  "execution": "CPU-only unit tests in an isolated container code copy; no GPU workload",
+  "command": "/afd-v25/e2e-venv/bin/python -m pytest -q tests/unit/connectors/test_p2p_connector.py tests/unit/v1/worker/test_ffn_model_runner.py",
+  "result": "59 passed",
+  "coverage": [
+    "P2P synchronous regression",
+    "1A2F FFN DP/EP metadata mapping",
+    "async connector config scope validation",
+    "A2F/F2A CUDA stream-event dependency ordering with fakes",
+    "async stream drain and resource cleanup"
+  ],
+  "limitations": [
+    "No CUDA/NCCL kernels executed in this unit run",
+    "GPU semantic equivalence and profiler overlap remain pending"
+  ]
+}

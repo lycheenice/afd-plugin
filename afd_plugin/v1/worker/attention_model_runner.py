@@ -123,14 +123,14 @@ class AFDAttentionModelRunner(GPUModelRunner):
 
         if ubatch_slices and len(ubatch_slices) > 1:
             dp_metadata_list = {
-                idx: metadata
+                idx: _as_afd_control_metadata(metadata)
                 for idx, metadata in enumerate(
                     build_ubatch_dp_metadata_list(self.vllm_config, ubatch_slices),
                 )
             }
         else:
             dp_metadata = self._ensure_dp_metadata(dp_metadata)
-            dp_metadata_list = {0: dp_metadata}
+            dp_metadata_list = {0: _as_afd_control_metadata(dp_metadata)}
         is_warmup = self._is_warmup
         is_graph_capturing = bool(getattr(self, "_afd_is_graph_capturing", False))
         payload = AFDControlPayload(
@@ -192,7 +192,7 @@ class AFDAttentionModelRunner(GPUModelRunner):
             max_tokens_across_dp_cpu=torch.max(num_tokens_across_dp_cpu),
         )
 
-    def _build_capture_dp_metadata(self, num_tokens: int) -> DPMetadata | AFDDPMetadata:
+    def _build_capture_dp_metadata(self, num_tokens: int) -> AFDDPMetadata:
         dp_size = int(self.vllm_config.parallel_config.data_parallel_size)
         num_tokens_across_dp_cpu = torch.full(
             (dp_size,),
@@ -200,12 +200,6 @@ class AFDAttentionModelRunner(GPUModelRunner):
             dtype=torch.int32,
             device="cpu",
         )
-        if dp_size > 1:
-            return DPMetadata.make(
-                self.vllm_config.parallel_config,
-                int(num_tokens),
-                num_tokens_across_dp_cpu,
-            )
         max_tokens_across_dp_cpu = torch.max(num_tokens_across_dp_cpu)
         return AFDDPMetadata(
             num_tokens_across_dp_cpu=num_tokens_across_dp_cpu,
@@ -468,6 +462,18 @@ class AFDAttentionModelRunner(GPUModelRunner):
         counter = self._afd_transaction_counter
         self._afd_transaction_counter = counter + 1
         return f"afd-{counter}"
+
+
+def _as_afd_control_metadata(
+    dp_metadata: DPMetadata | AFDDPMetadata,
+) -> AFDDPMetadata:
+    """Normalize version-specific vLLM DP metadata for AFD control traffic."""
+
+    if isinstance(dp_metadata, AFDDPMetadata):
+        return dp_metadata
+    return AFDDPMetadata(
+        num_tokens_across_dp_cpu=dp_metadata.num_tokens_across_dp_cpu,
+    )
 
 
 def fail_if_unsupported_ubatching(vllm_config: VllmConfig) -> None:

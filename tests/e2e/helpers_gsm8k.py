@@ -14,6 +14,8 @@ import threading
 import time
 from pathlib import Path
 
+DEFAULT_LM_EVAL_TIMEOUT_SECONDS = 7200
+
 
 def _run_lm_eval(
     base_url: str,
@@ -85,7 +87,15 @@ def _run_lm_eval(
         bufsize=1,
         env=env,
     )
-    deadline = time.monotonic() + 7200  # 2h max
+    timeout_seconds = int(
+        os.environ.get(
+            "AFD_LM_EVAL_TIMEOUT_SECONDS",
+            str(DEFAULT_LM_EVAL_TIMEOUT_SECONDS),
+        )
+    )
+    if timeout_seconds <= 0:
+        raise ValueError("AFD_LM_EVAL_TIMEOUT_SECONDS must be positive")
+    deadline = time.monotonic() + timeout_seconds
     stdout_lines: list[str] = []
 
     # Pump stdout through a queue on a daemon thread so a blocking readline()
@@ -105,7 +115,9 @@ def _run_lm_eval(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             proc.kill()
-            raise TimeoutError("lm-eval exceeded 7200s budget")
+            raise TimeoutError(
+                f"lm-eval exceeded {timeout_seconds}s budget",
+            )
         try:
             line = _line_q.get(timeout=min(remaining, 5.0))
         except queue.Empty:

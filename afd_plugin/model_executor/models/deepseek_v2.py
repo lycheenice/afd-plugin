@@ -18,9 +18,17 @@ import torch.nn as nn
 from vllm.config import VllmConfig, get_current_vllm_config
 from vllm.forward_context import get_forward_context
 from vllm.logger import init_logger
-from vllm.model_executor.layers.fused_moe.shared_fused_moe import (
-    SharedFusedMoE,
-)
+
+try:
+    from vllm.model_executor.layers.fused_moe import (
+        fused_moe_make_expert_params_mapping,
+    )
+except ImportError:
+    from vllm.model_executor.layers.fused_moe.shared_fused_moe import (
+        SharedFusedMoE,
+    )
+
+    fused_moe_make_expert_params_mapping = SharedFusedMoE.make_expert_params_mapping
 from vllm.model_executor.layers.linear import ReplicatedLinear
 from vllm.model_executor.model_loader.weight_utils import (
     default_weight_loader,
@@ -361,7 +369,6 @@ class AFDDeepseekV2Model(torch.nn.Module):
         self.afd_config = parse_optional_afd_config(vllm_config, validate=False)
         self.config = config
         self.device = native.current_platform.device_type
-
 
         self.vocab_size = config.vocab_size
         self.is_v32 = hasattr(config, "index_topk")
@@ -706,7 +713,7 @@ class AFDDeepseekV2ForCausalLM(native.DeepseekV2ForCausalLM):
         else:
             num_redundant_experts = self.num_redundant_experts
 
-        expert_params_mapping = SharedFusedMoE.make_expert_params_mapping(
+        expert_params_mapping = fused_moe_make_expert_params_mapping(
             self,
             ckpt_gate_proj_name="gate_proj",
             ckpt_down_proj_name="down_proj",

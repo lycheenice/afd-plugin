@@ -4,20 +4,123 @@
 > 0.25.0 已修且 native GLM-5.2-FP8 正确(见 `ANALYSIS_glm52_vllm0191_blocker_20260727.md`)。
 > 用户指令:A 反复无果则移植 afd-plugin 到最新 vLLM,全程文档化。**目标 vLLM = 0.25.0**(已在 gpu-host)。
 
-## 已确立的事实
+## 2026-07-28 AFD 拆分栈实施结论
+
+GPU 同步 P2P 的最小可用路径已经迁移到 vLLM 0.25.0,并在 `redacted-host` 的 H20 上完成
+DeepSeek-V2-Lite `1A1F` eager 冒烟。vLLM 源码和镜像均未修改,所有兼容行为位于插件侧。
+
+### 支持边界
+
+| 项 | v0.25.0 状态 | 证据/约束 |
+|---|---|---|
+| general plugin 注册 | 通过 | `register_afd()` 无版本警告 |
+| 自动 Worker 选择 | 通过 | 启动命令未传 `--worker-cls`,FFN 成功进入 connector loop |
+| DeepSeek-V2-Lite 1A1F eager | 通过 | HTTP 200,输出连贯;Attention 约 1.54 GiB,FFN 约 29 GiB |
+| P2pNccl 控制/数据面 | 通过 | FFN/Attention NCCL 握手、逐层往返和生成完成 |
+| model runner v2 | 不支持 | 必须设置 `VLLM_USE_V2_MODEL_RUNNER=0` |
+| DP>1 / DBO / CUDA graph / async | 待专项硬件回归 | 已完成静态接口对齐与相关单测,不由本次 1A1F eager 冒烟外推 |
+| v0.19.1 旧基线 | 保留 | 支持集合同时包含 `0.19.1` 与 `0.25.0` |
+| Ascend NPU | 仍以 0.19.1rc1 为基线 | 本次不宣称 vLLM-Ascend 0.25 兼容 |
+
+### 根因链与设计决策
+
+1. **禁止半套运行栈。** 首次 0.25 验证中 `engine_core` patch 无条件生效,但
+   `config_validation` 被 `TARGET_VLLM_VERSION=0.19.1` 门禁,形成“AFD EngineCore + 原生
+   Worker”。FFN 因此在 `start_ffn_server_loop` RPC 上报 `NotImplementedError`。版本声明现改为
+   `TARGET_VLLM_VERSION=0.25.0`,并用明确支持集合保留 0.19.1;所有版本门统一查询该集合。
+2. **Worker 继续由配置规范化自动选择。** 不把 `--worker-cls` 固化到部署脚本。补丁在上游
+   `VllmConfig.__post_init__` 完成平台默认选择后,仅对激活 AFD 的配置替换为角色 Worker。
+3. **模型 wrapper 使用稳定能力接口。** 0.25 删除
+   `fused_moe.shared_fused_moe.SharedFusedMoE`,改为公开函数
+   `fused_moe_make_expert_params_mapping`;插件做双版本导入,不复制 0.25 MoE 内部实现。
+4. **控制面协议不依赖 vLLM DPMetadata 字段。** 0.25 删除
+   `max_tokens_across_dp_cpu`;发送前统一转换为 `AFDDPMetadata`,最大 token 数从
+   `num_tokens_across_dp_cpu` 重算。连接器 JSON 线格式保持不变。
+5. **EngineCore patch 以 0.25 为上游基准。** FFN daemon 只标注并保留 AFD 差异;
+   非 AFD/Attention 路径补齐 0.25 的 request-count 发布、sleeping dummy guard、迭代日志和
+   distributed cleanup。FFN 存根补齐 0.25 新增状态字段。
+6. **FFN Runner 保持最小职责。** 它不继承完整 `GPUModelRunner` 的 KV、采样、LoRA 和 drafter
+   生命周期;仅对齐被 vLLM Worker 调用的签名/返回类型。若未来支持 FFN LoRA/speculative,
+   应单独设计,不能把本次“未用到”解释为已支持。
+
+### 实现文件
+
+| 文件 | 改动 |
+|---|---|
+| `afd_plugin/compat/vllm.py` | 目标版本 0.25.0 + 0.19.1/0.25.0 支持集合 |
+| `compat/patches/config_validation.py` | 两版本自动 AFD Worker 选择 |
+| `compat/patches/engine_core.py` | FFN 新状态、0.25 DP loop、distributed cleanup |
+| `compat/patches/async_dp_forward_context.py` | `is_padding`、SP-MoE 判据及 DP fallback |
+| `compat/patches/async_dp_engine.py` | 统一双版本门控 |
+| `model_executor/models/deepseek_v2.py` | 双版本 MoE 专家映射 API |
+| `v1/worker/ffn_worker.py` | 0.25 `CompilationTimes` 返回契约 |
+| `v1/worker/ffn_model_runner.py` | `initialize_kv_cache(..., is_profiling=False)` |
+| `v1/worker/attention_model_runner.py` | 控制面 DPMetadata 归一化 |
+
+### 可复现环境与命令
+
+- 主机:`redacted-host`,8× NVIDIA H20-3e 143 GiB。
+- 代码:`/workspace/afd-plugin`,验证基线 `9d6aa37` 加本次工作区改动。
+- 模型:`/models/DeepSeek-V2-Lite`。
+- 镜像:`docker.m.daocloud.io/vllm/vllm-openai:v0.25.0`,ID
+  `sha256:fc56161ee42a011aeee78b65d0a81b6683c7d04402fd40503d14d4d6c98f07cb`。
+- 容器:`afd-v025-validate`;代码只读挂载为 `/workspace/afd-plugin`,模型只读挂载为 `/models`。
+
+```bash
+docker exec -e VLLM_USE_V2_MODEL_RUNNER=0 afd-v025-validate \
+  python3 tests/e2e/runner.py \
+  --model /models/DeepSeek-V2-Lite \
+  --vllm-bin /usr/local/bin/vllm \
+  --device-backend gpu \
+  --num-attention-ranks 1 --num-ffn-ranks 1 \
+  --attention-gpus 0 --ffn-gpus 1 \
+  --api-port-base 18100 --afd-port 6339 \
+  --startup-timeout 900 \
+  --common-vllm-arg=--trust-remote-code
+```
+
+成功判据不是 runner 的退出码单项,而是同时满足:
+
+1. FFN 出现 `AFD FFN EngineCore started; workers run connector loop` 且无 fatal traceback;
+2. Attention 权重显存显著小于完整 29 GiB 模型(本次为 1.54 GiB);
+3. FFN 侧加载专家参数并参与 NCCL 往返;
+4. Attention API HTTP 200,生成文本连贯;
+5. runner 退出后 GPU compute 进程与 18100/18101/6339 监听均清空。
+
+### 验证结果
+
+| 验证层 | 结果 | 说明 |
+|---|---|---|
+| 本地静态检查 | 通过 | `uv lock --check`、Ruff、`compileall`、`git diff --check` 均通过 |
+| 本地轻量单测 | 通过 | package/version 与 config patch 测试通过（2 项按环境跳过） |
+| v0.25.0 定向回归 | 通过 | 89 passed；覆盖版本门、config、EngineCore、forward context、FFN/Attention runner |
+| v0.25.0 全量 unit | 迁移相关通过，待重跑收口 | `test_p2p_topology_validation_errors_are_clear` 的旧断言已改为 fan-out 正向映射测试，并保留真正非法拓扑断言；需在 v0.25.0 环境重跑全量 unit |
+| v0.25.0 真实 1A1F | 通过 | GET/POST HTTP 200，生成 16 tokens；日志保存在 `<redacted-log-path>` |
+| v0.19.1 兼容回归 | 静态/单测通过，实机重跑未完成 | 直接接口字段已核验；重跑时 8 张 H20 被外部 SGLang TP8 全部占用，启动在模型加载前因显存不足退出，不是代码异常 |
+| 退出资源检查 | 通过 | runner/vLLM 进程、GPU compute process、18100/18101/6339 监听均为空 |
+
+镜像按用户要求保留。其实际 containerd snapshot 占用约 27.4 GiB；系统盘仍有 124 GiB
+可用空间（87% 使用率）。验证产生的服务进程和 GPU 资源已经全部释放。
+
+## 前期调研记录（历史）
+
+以下内容保留早期 native GLM-5.2/W4AFP8 调研过程；若状态与上方“实施结论”冲突，以上方
+最终结论为准。
+
+### 已确立的事实
 1. **0.25.0 native GLM-5.2-FP8 正确**(无插件)——架构支持 OK,是移植的坚实地基。
 2. **0.25.0 原生不认 w4afp8 量化**(`Unknown quantization method: w4afp8`)——w4afp8 是插件自带,GLM-5.2-W4AFP8 必须靠插件。
 3. **afd-plugin 在 0.25.0 可安装 + register_afd 可运行**:`pip install -e` 成功;版本断言 `strict=False` 仅警告;
    **w4afp8 量化注册成功**(`"w4afp8" in QUANTIZATION_METHODS == True`)。register_afd 各步 try/except 静默,鲁棒。
 
-## 移植分层与工作量
+### 移植分层与工作量（调研阶段估算）
 | 层 | 文件 | 0.19.1→0.25.0 风险 | 本期 |
 |---|---|---|---|
-| 版本门 | compat/vllm.py | 低(strict=False 已不阻塞;可加 0.25.0 到支持集) | 待办 |
-| compat/patches | async_dp_engine/engine_core/forward_context/config_validation | 高(猴补丁贴 0.19.1 内部,try/except 静默失败;AFD-async 才需要) | native 不需要,AFD 需 |
-| **量化桥接** | quantization/w4afp8.py | **中高**(见下故障) | **本期主攻(native W4AFP8 正确性)** |
-| AFD 模型 wrapper | model_executor/models/deepseek_v2.py | 中(subclass vLLM Deepseek,__init__/load_weights 随上游变) | 部分 |
-| AFD worker/连接器 | v1/worker, connectors/gpu | 高(hook vLLM worker/executor 内部) | 下阶段(full AFD) |
+| 版本门 | compat/vllm.py | 低(strict=False 已不阻塞;可加 0.25.0 到支持集) | 已完成 |
+| compat/patches | async_dp_engine/engine_core/forward_context/config_validation | 高(猴补丁贴 0.19.1 内部) | 1A1F 最小路径已完成；DP/async 待专项 |
+| **量化桥接** | quantization/w4afp8.py | **中高**(见下故障) | 独立 W4AFP8 专项，不属于本次 BF16 最小冒烟 |
+| AFD 模型 wrapper | model_executor/models/deepseek_v2.py | 中(subclass vLLM Deepseek,__init__/load_weights 随上游变) | DeepSeek-V2-Lite 最小路径已完成 |
+| AFD worker/连接器 | v1/worker, connectors/gpu | 高(hook vLLM worker/executor 内部) | P2pNccl 1A1F 已完成；扩展拓扑待专项 |
 
 ## 故障排查日志(逐个)
 ### #1 FusedMoE 由类变工厂函数(已定位)
@@ -31,7 +134,7 @@
 （后续故障 #2… 随迭代追加）
 
 ## 复现环境
-gpu-host 容器 `afd-v25`(镜像 `docker.1ms.run/vllm/vllm-openai:v0.25.0`,挂 /data1/models、/data1/afd-plugin,
+gpu-host 容器 `afd-v25`(镜像 `docker.1ms.run/vllm/vllm-openai:v0.25.0`,挂 /models、/workspace/afd-plugin,
 `pip install -e` 已装)。启动:`docker exec -e VLLM_PLUGINS=afd -e PYTHONPATH=/workspace/afd-plugin afd-v25
 vllm serve /models/GLM-5.2-W4AFP8 --tensor-parallel-size 8 --enable-expert-parallel --enforce-eager ...`。
 日志 `experiment/logs/glm_w4afp8_v25_native.log`。

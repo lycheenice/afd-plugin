@@ -2,25 +2,27 @@
 # SPDX-FileCopyrightText: Copyright contributors to the AFD plugin project
 """NCCL-backed point-to-point AFD connector for CUDA deployments.
 
-``P2pNcclAFDConnector`` exchanges hidden states synchronously between
-disaggregated Attention and FFN workers through NCCL point-to-point
-communication, implemented with vLLM's ``PyNcclCommunicator``. It supports
-both prefill and decode; eager mode is supported and CUDA graph support is
-currently limited to ``FULL_DECODE_ONLY``.
+``P2pNcclAFDConnector`` exchanges hidden states between disaggregated Attention
+and FFN workers through NCCL point-to-point communication, implemented with
+vLLM's ``PyNcclCommunicator``. The default data path is synchronous. An
+experimental connector-owned multi-stream path is available only for eager
+``1A1F`` execution with exactly two DBO ubatches. The connector supports both
+prefill and decode; CUDA graph support is currently limited to
+``FULL_DECODE_ONLY`` on the synchronous path.
 
 Topology:
     The connector creates one AFD NCCL world ordered as
     ``[F0, F1, ..., A0, A1, ...]``: FFN ranks first, followed by Attention
-    ranks. Each FFN rank owns one subgroup containing itself and one or more
-    consecutive Attention ranks, which requires::
+    ranks. The smaller side owns one subgroup containing itself and one or more
+    consecutive peers from the larger side, which requires::
 
-        num_attention_ranks >= num_ffn_ranks
-        num_attention_ranks % num_ffn_ranks == 0
+        max(num_attention_ranks, num_ffn_ranks)
+            % min(num_attention_ranks, num_ffn_ranks) == 0
 
-    Attention sends hidden states to its mapped FFN rank; the FFN rank
-    concatenates inputs from its Attention peers, runs FFN work, splits the
-    output by the recorded sequence lengths, and sends each slice back to the
-    originating Attention rank.
+    When Attention is the larger side, each FFN rank concatenates inputs from
+    its Attention peers, runs FFN work, and sends each output slice back to the
+    originating rank. When FFN is the larger side, Attention activations fan
+    out to the mapped FFN peers and the designated peer returns the result.
 
 Control and data planes:
     DP metadata handling is a pluggable control plane, not part of the
@@ -49,8 +51,10 @@ Requirements and limitations:
       initialization failure or timeout.
     - The rendezvous base ``port`` and the derived subgroup ports
       (``port + subgroup_index + 1``) must be free and reachable.
-    - AFD async mode (``async`` / ``async_dp``) is not supported; GPU DBO
-      combined with CUDA graphs is limited to exactly two ubatches.
+    - General AFD async mode (``async`` / ``async_dp``) is not supported. The
+      experimental ``connector_extra_config.async_transfer`` path requires
+      eager ``1A1F`` and exactly two DBO ubatches. GPU DBO combined with CUDA
+      graphs is limited to exactly two ubatches on the synchronous path.
     - Cross-node use is not established by the checked-in recipes and should
       be treated as unverified.
 
@@ -62,8 +66,9 @@ deployments.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 import torch
 from torch.distributed.distributed_c10d import ProcessGroup, _get_default_group
@@ -73,6 +78,7 @@ from vllm.forward_context import DPMetadata
 from vllm.utils.torch_utils import direct_register_custom_op
 
 from afd_plugin.config import AFDConfig
+from afd_plugin.config_utils import coerce_extra_bool, coerce_extra_positive_int
 from afd_plugin.connectors.base import (
     AFDConnectorBase,
     AFDControlPlane,
@@ -99,6 +105,16 @@ if TYPE_CHECKING:
 _AFD_COMMUNICATORS: dict[int, PyNcclCommunicator] = {}
 _AFD_COMM_ID_COUNTER = 0
 _AFD_CUSTOM_OPS_REGISTERED = False
+_A2F_DIRECTION: Final[str] = "a2f"
+_F2A_DIRECTION: Final[str] = "f2a"
+_COMPUTE_READY_EVENT: Final[str] = "compute_ready"
+_SEND_COMPLETE_EVENT: Final[str] = "send_complete"
+_RECV_COMPLETE_EVENT: Final[str] = "recv_complete"
+_INPUT_CONSUMED_EVENT: Final[str] = "input_consumed"
+P2P_ASYNC_MVP_SLOTS: Final[int] = 2
+_P2P_EXTRA_CONFIG_FIELDS: Final[frozenset[str]] = frozenset(
+    {"async_transfer", "async_slots"},
+)
 
 
 class _TensorMetadata(NamedTuple):
@@ -107,6 +123,45 @@ class _TensorMetadata(NamedTuple):
     device: torch.device
     dtype: torch.dtype
     size: torch.Size
+
+
+@dataclass(frozen=True)
+class P2pNcclExtraInfo(ConnectorExtraInfo):
+    """Typed configuration for optional eager GPU communication streams."""
+
+    async_transfer: bool = False
+    async_slots: int = P2P_ASYNC_MVP_SLOTS
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any] | None) -> P2pNcclExtraInfo:
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, Mapping):
+            raise TypeError(
+                f"{cls.__name__} connector_extra_config must be a mapping, "
+                f"got {type(raw).__name__}",
+            )
+        unknown = sorted(str(key) for key in raw if key not in _P2P_EXTRA_CONFIG_FIELDS)
+        if unknown:
+            raise ValueError(
+                "unknown P2P connector_extra_config field(s): " + ", ".join(unknown),
+            )
+        return cls(
+            async_transfer=coerce_extra_bool(
+                raw.get("async_transfer", False),
+                field_name="async_transfer",
+            ),
+            async_slots=coerce_extra_positive_int(
+                raw.get("async_slots", P2P_ASYNC_MVP_SLOTS),
+                field_name="async_slots",
+            ),
+        )
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "async_transfer": self.async_transfer,
+            "async_slots": self.async_slots,
+        }
 
 
 class P2pNcclAFDConnector(AFDConnectorBase):
@@ -130,20 +185,14 @@ class P2pNcclAFDConnector(AFDConnectorBase):
     contract, and requirements.
     """
 
+    extra_info: P2pNcclExtraInfo
+
     @classmethod
     def parse_extra_config(
         cls,
         raw: Mapping[str, Any] | None,
-    ) -> ConnectorExtraInfo:
-        # P2P currently has no connector-specific options, so only an empty
-        # connector_extra_config is accepted.
-        if raw is not None and not isinstance(raw, Mapping):
-            raise TypeError("P2P connector_extra_config must be a mapping")
-        if raw:
-            raise ValueError(
-                "P2pNcclAFDConnector does not support connector_extra_config",
-            )
-        return ConnectorExtraInfo()
+    ) -> P2pNcclExtraInfo:
+        return P2pNcclExtraInfo.from_mapping(raw)
 
     def __init__(
         self,
@@ -210,7 +259,15 @@ class P2pNcclAFDConnector(AFDConnectorBase):
         self.e2a_pynccl: PyNcclCommunicator | None = None
         self.a2e_comm_id: int | None = None
         self.e2a_comm_id: int | None = None
+        self._a2f_stream: torch.cuda.Stream | None = None
+        self._f2a_stream: torch.cuda.Stream | None = None
+        self._async_events: dict[tuple[str, str, int], torch.cuda.Event] = {}
+        self._async_recv_buffers: dict[
+            tuple[str, int, int],
+            torch.Tensor,
+        ] = {}
         self.control_plane = P2pNcclAFDControlPlane(self)
+        self._validate_async_transfer_config()
 
     def close(self) -> None:
         """Release NCCL communicators and their custom-op registrations.
@@ -220,6 +277,7 @@ class P2pNcclAFDConnector(AFDConnectorBase):
         shuts the ``PyNcclCommunicator`` instances down, and marks the
         connector uninitialized. Safe to call repeatedly.
         """
+        self._drain_async_transfer()
         for comm_id_name in ("a2e_comm_id", "e2a_comm_id"):
             comm_id = getattr(self, comm_id_name, None)
             if comm_id is not None:
@@ -231,7 +289,42 @@ class P2pNcclAFDConnector(AFDConnectorBase):
             if callable(shutdown):
                 shutdown()
             setattr(self, communicator_name, None)
+        self._a2f_stream = None
+        self._f2a_stream = None
+        self._async_events.clear()
+        self._async_recv_buffers.clear()
         self._initialized = False
+
+    def _validate_async_transfer_config(self) -> None:
+        """Fail fast when the experimental GPU async MVP is out of scope."""
+        if not self.extra_info.async_transfer:
+            return
+        if not self.vllm_config.model_config.enforce_eager:
+            raise ValueError("P2P async_transfer currently requires eager mode")
+        if self.attn_size != 1 or self.ffn_size != 1:
+            raise ValueError("P2P async_transfer currently requires 1A1F topology")
+        parallel_config = self.vllm_config.parallel_config
+        if (
+            not parallel_config.use_ubatching
+            or parallel_config.num_ubatches != P2P_ASYNC_MVP_SLOTS
+        ):
+            raise ValueError(
+                "P2P async_transfer currently requires exactly two DBO ubatches",
+            )
+        if self.extra_info.async_slots != P2P_ASYNC_MVP_SLOTS:
+            raise ValueError("P2P async_transfer currently requires async_slots=2")
+
+    def _initialize_async_transfer(self) -> None:
+        if not self.extra_info.async_transfer:
+            return
+        self._a2f_stream = torch.cuda.Stream(device=self.local_rank)
+        self._f2a_stream = torch.cuda.Stream(device=self.local_rank)
+
+    def _drain_async_transfer(self) -> None:
+        if self._a2f_stream is not None:
+            self._a2f_stream.synchronize()
+        if self._f2a_stream is not None:
+            self._f2a_stream.synchronize()
 
     def init_afd_connector(self) -> None:
         """Create the AFD NCCL world and per-subgroup communicators.
@@ -296,12 +389,148 @@ class P2pNcclAFDConnector(AFDConnectorBase):
                 timeout=timedelta(minutes=30),
             )
 
+        self._initialize_async_transfer()
         self._initialized = True
 
     @property
     def is_initialized(self) -> bool:
         """Return whether the NCCL groups and communicators are ready."""
         return self._initialized
+
+    def _async_stream(self, direction: str) -> torch.cuda.Stream:
+        if direction not in {_A2F_DIRECTION, _F2A_DIRECTION}:
+            raise ValueError(f"unknown P2P async transfer direction: {direction}")
+        stream = self._a2f_stream if direction == _A2F_DIRECTION else self._f2a_stream
+        if stream is None:
+            raise RuntimeError("P2P async transfer stream is not initialized")
+        return stream
+
+    def _async_event(
+        self,
+        event_kind: str,
+        direction: str,
+        stage_idx: int,
+    ) -> torch.cuda.Event:
+        key = (event_kind, direction, stage_idx)
+        event = self._async_events.get(key)
+        if event is None:
+            event = torch.cuda.Event(enable_timing=False, blocking=False)
+            self._async_events[key] = event
+        return event
+
+    def _validate_async_stage(self, stage_idx: int) -> None:
+        if not 0 <= stage_idx < self.extra_info.async_slots:
+            raise ValueError(
+                f"P2P async stage {stage_idx} is outside "
+                f"async_slots={self.extra_info.async_slots}",
+            )
+
+    def _enqueue_async_send(
+        self,
+        hidden_states: torch.Tensor,
+        dst: int,
+        comm_id: int,
+        *,
+        direction: str,
+        stage_idx: int,
+    ) -> None:
+        self._validate_async_stage(stage_idx)
+        transfer_stream = self._async_stream(direction)
+        compute_stream = torch.cuda.current_stream(hidden_states.device)
+        compute_ready = self._async_event(
+            _COMPUTE_READY_EVENT,
+            direction,
+            stage_idx,
+        )
+        send_complete = self._async_event(
+            _SEND_COMPLETE_EVENT,
+            direction,
+            stage_idx,
+        )
+        compute_ready.record(compute_stream)
+        transfer_stream.wait_event(compute_ready)
+        with torch.cuda.stream(transfer_stream):
+            torch.ops.vllm.afd_p2p_send(hidden_states, dst, comm_id)
+            hidden_states.record_stream(transfer_stream)
+            send_complete.record(transfer_stream)
+
+    def _enqueue_async_recv(
+        self,
+        src: int,
+        comm_id: int,
+        tensor_metadata: _TensorMetadata,
+        *,
+        ref_tensor: torch.Tensor | None,
+        direction: str,
+        stage_idx: int,
+    ) -> torch.Tensor:
+        self._validate_async_stage(stage_idx)
+        transfer_stream = self._async_stream(direction)
+        compute_stream = torch.cuda.current_stream(tensor_metadata.device)
+        if direction == _A2F_DIRECTION:
+            reuse_ready = self._async_events.get(
+                (_INPUT_CONSUMED_EVENT, direction, stage_idx),
+            )
+        else:
+            reuse_ready = self._async_events.get(
+                (_SEND_COMPLETE_EVENT, _A2F_DIRECTION, stage_idx),
+            )
+        if reuse_ready is not None:
+            transfer_stream.wait_event(reuse_ready)
+
+        size = list(tensor_metadata.size)
+        if ref_tensor is not None:
+            size[0] = ref_tensor.shape[0]
+        if (
+            ref_tensor is not None
+            and ref_tensor.shape == tuple(size)
+            and ref_tensor.dtype == tensor_metadata.dtype
+            and ref_tensor.device == tensor_metadata.device
+        ):
+            hidden_states = ref_tensor
+        else:
+            buffer_key = (direction, stage_idx, src)
+            hidden_states = self._async_recv_buffers.get(buffer_key)
+            if (
+                hidden_states is None
+                or hidden_states.shape != tuple(size)
+                or hidden_states.dtype != tensor_metadata.dtype
+                or hidden_states.device != tensor_metadata.device
+            ):
+                with torch.cuda.stream(transfer_stream):
+                    hidden_states = torch.empty(
+                        tuple(size),
+                        dtype=tensor_metadata.dtype,
+                        device=tensor_metadata.device,
+                    )
+                self._async_recv_buffers[buffer_key] = hidden_states
+
+        recv_complete = self._async_event(
+            _RECV_COMPLETE_EVENT,
+            direction,
+            stage_idx,
+        )
+        with torch.cuda.stream(transfer_stream):
+            torch.ops.vllm.afd_p2p_recv(hidden_states, src, comm_id)
+            hidden_states.record_stream(transfer_stream)
+            recv_complete.record(transfer_stream)
+        compute_stream.wait_event(recv_complete)
+        hidden_states.record_stream(compute_stream)
+        return hidden_states
+
+    def _record_ffn_input_consumed(
+        self,
+        ffn_output: torch.Tensor,
+        stage_idx: int,
+    ) -> None:
+        if not self.extra_info.async_transfer:
+            return
+        event = self._async_event(
+            _INPUT_CONSUMED_EVENT,
+            _A2F_DIRECTION,
+            stage_idx,
+        )
+        event.record(torch.cuda.current_stream(ffn_output.device))
 
     def send_attn_output(
         self,
@@ -340,6 +569,8 @@ class P2pNcclAFDConnector(AFDConnectorBase):
                     dst,
                     self.a2e_group,
                     self.a2e_comm_id,
+                    direction=_A2F_DIRECTION,
+                    stage_idx=metadata.stage_idx,
                 )
             return
         # ### PATCH END: AFD fan-out topology
@@ -348,6 +579,8 @@ class P2pNcclAFDConnector(AFDConnectorBase):
             0,
             self.a2e_group,
             self.a2e_comm_id,
+            direction=_A2F_DIRECTION,
+            stage_idx=metadata.stage_idx,
         )
 
     def recv_ffn_output(
@@ -381,6 +614,8 @@ class P2pNcclAFDConnector(AFDConnectorBase):
                 self.e2a_comm_id,
                 self.tensor_metadata_list[ubatch_idx],
                 ref_tensor=ref_tensor,
+                direction=_F2A_DIRECTION,
+                stage_idx=ubatch_idx,
             )
             return output
         # ### PATCH END: AFD fan-out topology
@@ -390,6 +625,8 @@ class P2pNcclAFDConnector(AFDConnectorBase):
             self.e2a_comm_id,
             self.tensor_metadata_list[ubatch_idx],
             ref_tensor=ref_tensor,
+            direction=_F2A_DIRECTION,
+            stage_idx=ubatch_idx,
         )
         if output is None:
             raise RuntimeError(
@@ -441,6 +678,8 @@ class P2pNcclAFDConnector(AFDConnectorBase):
                 self.a2e_comm_id,
                 tensor_metadata,
                 ref_tensor=ref_tensor,
+                direction=_A2F_DIRECTION,
+                stage_idx=ubatch_idx,
             )
             metadata = AFDTransferMetadata.create_ffn_metadata(
                 layer_idx=0,
@@ -471,6 +710,8 @@ class P2pNcclAFDConnector(AFDConnectorBase):
                     self.a2e_comm_id,
                     tensor_metadata,
                     ref_tensor=ref_tensor,
+                    direction=_A2F_DIRECTION,
+                    stage_idx=ubatch_idx,
                 ),
             )
 
@@ -527,17 +768,30 @@ class P2pNcclAFDConnector(AFDConnectorBase):
             raise ValueError(
                 f"ffn_output shape {ffn_output.shape!r} does not match metadata",
             )
+        self._record_ffn_input_consumed(ffn_output, metadata.stage_idx)
         # ### PATCH START: AFD fan-out topology (attention < ffn, e.g. 1A2F)
         if self.reversed:
             if self.mapping.rank_in_subgroup != 1:
                 return
             self._send_hidden_states(
-                ffn_output, 0, self.e2a_group, self.e2a_comm_id,
+                ffn_output,
+                0,
+                self.e2a_group,
+                self.e2a_comm_id,
+                direction=_F2A_DIRECTION,
+                stage_idx=metadata.stage_idx,
             )
             return
         # ### PATCH END: AFD fan-out topology
         if self.ratio == 1:
-            self._send_hidden_states(ffn_output, 1, self.e2a_group, self.e2a_comm_id)
+            self._send_hidden_states(
+                ffn_output,
+                1,
+                self.e2a_group,
+                self.e2a_comm_id,
+                direction=_F2A_DIRECTION,
+                stage_idx=metadata.stage_idx,
+            )
             return
 
         split_sizes = metadata.seq_lens
@@ -563,6 +817,8 @@ class P2pNcclAFDConnector(AFDConnectorBase):
                 dst,
                 self.e2a_group,
                 self.e2a_comm_id,
+                direction=_F2A_DIRECTION,
+                stage_idx=metadata.stage_idx,
             )
             start = end
 
@@ -572,6 +828,9 @@ class P2pNcclAFDConnector(AFDConnectorBase):
         dst: int,
         process_group: StatelessProcessGroup | None,
         comm_id: int | None,
+        *,
+        direction: str | None = None,
+        stage_idx: int = 0,
     ) -> None:
         """Send ``hidden_states`` to subgroup rank ``dst`` via the custom op.
 
@@ -588,6 +847,18 @@ class P2pNcclAFDConnector(AFDConnectorBase):
         if getattr(hidden_states, "is_cpu", False):
             raise ValueError("P2P hidden states must be on GPU")
 
+        if self.extra_info.async_transfer:
+            if direction is None:
+                raise RuntimeError("P2P async send requires a transfer direction")
+            self._enqueue_async_send(
+                hidden_states,
+                dst,
+                comm_id,
+                direction=direction,
+                stage_idx=stage_idx,
+            )
+            return
+
         torch.ops.vllm.afd_p2p_send(
             hidden_states,
             dst,
@@ -603,6 +874,8 @@ class P2pNcclAFDConnector(AFDConnectorBase):
         tensor_metadata: _TensorMetadata,
         *,
         ref_tensor: torch.Tensor | None = None,
+        direction: str | None = None,
+        stage_idx: int = 0,
     ) -> torch.Tensor:
         """Receive a tensor from subgroup rank ``src`` via the custom op.
 
@@ -620,6 +893,18 @@ class P2pNcclAFDConnector(AFDConnectorBase):
             return ref_tensor
         if src >= process_group.world_size:
             raise ValueError(f"invalid P2P source rank {src}")
+
+        if self.extra_info.async_transfer:
+            if direction is None:
+                raise RuntimeError("P2P async recv requires a transfer direction")
+            return self._enqueue_async_recv(
+                src,
+                comm_id,
+                tensor_metadata,
+                ref_tensor=ref_tensor,
+                direction=direction,
+                stage_idx=stage_idx,
+            )
 
         size = list(tensor_metadata.size)
         if ref_tensor is not None:
@@ -717,7 +1002,9 @@ class P2pNcclAFDControlPlane(AFDControlPlane):
                     )
                     num_tokens = tensor_metadata.size[0]
                     connector.tensor_metadata_list[stage_idx] = _TensorMetadata(
-                        device, dtype, torch.Size([num_tokens, connector.hidden_size]),
+                        device,
+                        dtype,
+                        torch.Size([num_tokens, connector.hidden_size]),
                     )
                     continue
                 # ### PATCH END: AFD fan-out topology
@@ -963,4 +1250,8 @@ def _register_p2p_custom_ops() -> None:
     _AFD_CUSTOM_OPS_REGISTERED = True
 
 
-__all__ = ["P2pNcclAFDConnector", "P2pNcclAFDControlPlane"]
+__all__ = [
+    "P2pNcclAFDConnector",
+    "P2pNcclAFDControlPlane",
+    "P2pNcclExtraInfo",
+]

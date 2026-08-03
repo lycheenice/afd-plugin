@@ -24,6 +24,7 @@ Future plan:
 
 from __future__ import annotations
 
+import inspect
 import sys
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -31,7 +32,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import vllm.forward_context as forward_context_module
 from vllm.config import CUDAGraphMode
 
-from afd_plugin.compat.vllm import TARGET_VLLM_VERSION
+from afd_plugin.compat.vllm import is_vllm_version_supported
 from afd_plugin.config import is_afd_async_dp
 
 if TYPE_CHECKING:
@@ -52,6 +53,10 @@ _FORWARD_CONTEXT_IMPORT_MODULES = (
     "vllm.v1.worker.kv_connector_model_runner_mixin",
     "vllm_ascend.ascend_forward_context",
 )
+_CREATE_FORWARD_CONTEXT_SUPPORTS_IS_PADDING = (
+    "is_padding"
+    in inspect.signature(forward_context_module.create_forward_context).parameters
+)
 
 
 # Patch reason: upstream set_forward_context always creates DPMetadata for MoE
@@ -70,6 +75,7 @@ def set_forward_context(
     ubatch_slices: UBatchSlices | None = None,
     slot_mapping: SlotMapping | None = None,
     skip_compiled: bool = False,
+    is_padding: torch.Tensor | None = None,
 ):
     """A context manager that stores the current forward context,
     can be attention metadata, etc.
@@ -88,14 +94,20 @@ def set_forward_context(
     # AFD async-DP coordinates batches through connector flow, so skip vLLM's
     # native DPMetadata construction only for AFD async configs.
     if not is_afd_async_dp(vllm_config) and (
-        vllm_config.parallel_config.data_parallel_size > 1
+        (
+            vllm_config.parallel_config.data_parallel_size > 1
+            or vllm_config.parallel_config.use_sequence_parallel_moe
+        )
         and vllm_config.parallel_config.is_moe_model is not False
         and (attn_metadata is not None or num_tokens is not None)
     ):
         # If num_tokens_across_dp hasn't already been initialized, then
         # initialize it here. Both DP padding and Microbatching will be
         # disabled.
-        if num_tokens_across_dp is None:
+        if (
+            num_tokens_across_dp is None
+            and vllm_config.parallel_config.data_parallel_size > 1
+        ):
             assert ubatch_slices is None
             assert num_tokens is not None
             _, num_tokens_across_dp, _ = (
@@ -106,6 +118,12 @@ def set_forward_context(
                 )
             )
             assert num_tokens_across_dp is not None
+        elif num_tokens_across_dp is None:
+            assert num_tokens is not None
+            num_tokens_across_dp = forward_context_module.torch.tensor(
+                [num_tokens],
+                dtype=forward_context_module.torch.int32,
+            )
         dp_metadata = forward_context_module.DPMetadata.make(
             vllm_config.parallel_config,
             num_tokens or 0,
@@ -134,7 +152,7 @@ def set_forward_context(
         )
     )
 
-    forward_context = forward_context_module.create_forward_context(
+    create_forward_context_args = (
         attn_metadata,
         vllm_config,
         dp_metadata,
@@ -145,6 +163,15 @@ def set_forward_context(
         additional_kwargs,
         skip_compiled,
     )
+    if _CREATE_FORWARD_CONTEXT_SUPPORTS_IS_PADDING:
+        forward_context = forward_context_module.create_forward_context(
+            *create_forward_context_args,
+            is_padding=is_padding,
+        )
+    else:
+        forward_context = forward_context_module.create_forward_context(
+            *create_forward_context_args,
+        )
 
     try:
         with forward_context_module.override_forward_context(forward_context):
@@ -199,7 +226,7 @@ def _is_target_vllm_compatible() -> bool:
     version_text = str(version_value)
     if "dev" in version_text:
         return True
-    return version_text.startswith(TARGET_VLLM_VERSION)
+    return is_vllm_version_supported(version_text)
 
 
 if _is_target_vllm_compatible():

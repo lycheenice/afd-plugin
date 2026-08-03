@@ -1,0 +1,14 @@
+{
+  "run_id": "20260728T2358Z-topology-2a1f-fix-regression",
+  "scope": "DeepSeek-V2-Lite-only",
+  "category": "semantic-topology-regression",
+  "topology": "2A1F",
+  "mode": "eager",
+  "outcome": "passed",
+  "semantic_prompts_passed": 4,
+  "semantic_prompts_total": 4,
+  "gpu_devices": [5, 6, 7],
+  "vllm_version": "0.25.0",
+  "postflight_experiment_processes": 0,
+  "postflight_gpu_memory_mib": {"5": 4, "6": 4, "7": 4}
+}

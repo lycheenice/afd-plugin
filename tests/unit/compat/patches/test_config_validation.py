@@ -136,6 +136,17 @@ def test_config_validation_patch_allows_vllm_dev_checkout(monkeypatch):
     assert cfg.parallel_config.all2all_backend == "allgather_reducescatter"
 
 
+def test_config_validation_patch_applies_to_vllm_025(monkeypatch):
+    arg_utils_module, _config_module = _install_fake_vllm_config(monkeypatch)
+    sys.modules["vllm"].__version__ = "0.25.0"
+    _load_patch_module()
+    args = _engine_args(active=True, role="ffn")
+
+    cfg = arg_utils_module.EngineArgs.create_engine_config(args)
+
+    assert cfg.parallel_config.worker_cls == FFN_WORKER_FQCN
+
+
 def test_config_validation_patch_relaxes_repeated_vllm_post_init(monkeypatch):
     arg_utils_module, _config_module = _install_fake_vllm_config(monkeypatch)
     _load_patch_module()

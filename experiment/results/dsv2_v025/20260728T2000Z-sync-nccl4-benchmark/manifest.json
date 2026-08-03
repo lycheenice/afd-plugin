@@ -1,0 +1,15 @@
+{
+  "run_id": "20260728T2000Z-sync-nccl4-benchmark",
+  "scope": "DeepSeek-V2-Lite-only",
+  "category": "async-performance-tuning",
+  "topology": "1A1F",
+  "mode": "eager",
+  "dbo": true,
+  "async_transfer": false,
+  "nccl_min_nchannels": 4,
+  "nccl_max_nchannels": 4,
+  "outcome": "infra_failure",
+  "reason": "AFD/NCCL initialization did not complete within the 900 second API startup budget",
+  "benchmark_repetitions_completed": 0,
+  "gpu_devices": [5, 6]
+}

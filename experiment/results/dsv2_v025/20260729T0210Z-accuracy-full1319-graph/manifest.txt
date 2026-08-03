@@ -1,0 +1,16 @@
+run_id=20260729T0210Z-accuracy-full1319-graph
+scope=DeepSeek-V2-Lite-GSM8K-full-graph-attempt
+vllm_version=0.25.0
+gpu_list=6,7
+gsm8k_limit=full
+lm_eval_timeout_seconds=7200
+outer_timeout_seconds=15000
+pytest_status=failed_timeout
+test_exit_code=1
+requests_successful=968
+requests_non200=0
+failure=lm-eval exceeded 7200s budget
+aggregated_results=not_written
+superseded_by=20260729T0453Z-accuracy-full1319-graph-retry1
+log=experiment/logs/dsv2_v025/20260729T0210Z-accuracy-full1319-graph/pytest-accuracy.log
+postflight=experiment/logs/dsv2_v025/20260729T0210Z-accuracy-full1319-graph/postflight.log

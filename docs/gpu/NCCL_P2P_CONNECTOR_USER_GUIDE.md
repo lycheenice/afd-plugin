@@ -4,7 +4,7 @@ P2pNcclAFDConnector (implemented with vLLM's PyNcclCommunicator) is a GPU-backed
 
 ## When to use `P2pNcclAFDConnector`
 
-Use this connector for CUDA deployments that disaggregate Attention and FFN workers and exchange hidden states synchronously through NCCL point-to-point communication.
+Use this connector for CUDA deployments that disaggregate Attention and FFN workers and exchange hidden states through NCCL point-to-point communication. The default path is synchronous. An experimental eager-only multi-stream path is available for the narrow `1A1F`/two-ubatch scope documented below.
 
 It supports both prefill and decode which all support eager mode. CUDA graph support is currently limited to `FULL_DECODE_ONLY`, which is mainly used in decode instance. The checked-in DeepSeek V2 Lite recipes cover colocated and prefill/decode-disaggregated deployments.
 
@@ -16,7 +16,7 @@ overlap, and the reasons DBO may show no performance gain, see
 
 ## How it works
 
-Throughout this section, let `A = num_attention_ranks`, `F = num_ffn_ranks`, and `ratio = A / F`. The topology rules (`A >= F`, `A % F == 0`) guarantee `ratio` is a whole number and make `min_size = min(A, F) = F`. One physical process sits at up to three different rank numbers — an AFD world rank, a subgroup rank, and a control-plane (`p2p`) rank — all derived deterministically from the role, role rank, and topology counts.
+Throughout this section, let `A = num_attention_ranks` and `F = num_ffn_ranks`. One side must be an integer multiple of the other. `ratio = max(A, F) / min(A, F)` is therefore a whole number. One physical process sits at up to three different rank numbers — an AFD world rank, a subgroup rank, and a control-plane (`p2p`) rank — all derived deterministically from the role, role rank, and topology counts.
 
 ### AFD world (shared rendezvous)
 
@@ -31,7 +31,7 @@ FFN role rank `i` gets world rank `i`; Attention role rank `j` gets world rank `
 
 ### Data plane: one subgroup per FFN rank
 
-Each FFN rank `k` owns subgroup `k`, containing itself plus its `ratio` consecutive Attention peers `A(k*ratio) .. A(k*ratio + ratio - 1)`. Inside a subgroup the FFN rank is always subgroup rank `0` and the Attention peers occupy subgroup ranks `1..ratio`.
+For `A >= F`, each FFN rank `k` owns subgroup `k`, containing itself plus its `ratio` consecutive Attention peers `A(k*ratio) .. A(k*ratio + ratio - 1)`. The FFN rank is subgroup rank `0` and the Attention peers occupy ranks `1..ratio`. For `F > A`, the layout is reversed: each Attention rank owns a subgroup at rank `0` with its consecutive FFN peers at ranks `1..ratio`; Attention activations are replicated to those peers and the designated peer returns the result.
 
 Each subgroup is its own process group rendezvoused on `port + subgroup_index + 1` (this is where the derived-port requirement comes from), carrying two NCCL communicators: Attention-to-FFN for hidden states and FFN-to-Attention for FFN outputs. Per layer/stage, each Attention peer sends its hidden states to subgroup rank `0`; the FFN rank receives from ranks `1..ratio` in order, concatenates along the token dimension, runs FFN work, splits the output by the recorded sequence lengths, and sends each slice back to the originating Attention rank. The data path uses vLLM `PyNcclCommunicator.send()` / `recv()` on the current CUDA stream.
 
@@ -94,21 +94,40 @@ AFD configuration is supplied through vLLM's `--additional-config` under the `af
 | `num_ffn_ranks` | `int` | `1` | Total number of AFD FFN ranks, including DP/TP-derived worker ranks. Must be positive. |
 | `afd_role_rank` | `int` | `0` | Rank within the selected role group. Must satisfy `0 <= rank < num_<role>_ranks`. Runners normally derive it from DP/PCP/TP placement; users should not assign duplicate role ranks. |
 | `compute_gate_on_attention` | `bool` | `false` | Must be `false`. Whether Attention computes MoE gate outputs before sending work to FFN. This is a general AFD field, not a PyNccl transport setting. |
-| `connector_extra_config` | `dict` | `{}` | Must remain empty; `P2pNcclAFDConnector` does not currently support connector-specific options. |
+| `connector_extra_config` | `dict` | `{}` | Connector-owned options. Supports `async_transfer` and `async_slots` as described below; unknown fields are rejected. |
 | `async` / `async_dp` | `bool` | `false` | Must remain `false` for `P2pNcclAFDConnector`; AFD async mode requires `CAMAsyncAFDConnector`. |
 
 Compatibility aliases currently accepted are `afd_role`, `afd_connector`, `afd_host`, and `afd_port`. Canonical field names should be used in new examples.
 
-## Topology rules
+### Experimental eager multi-stream path
 
-`P2pNcclAFDConnector` currently requires:
+This is separate from the general AFD `async` / `async_dp` mode. Enable it identically on the Attention and FFN processes:
 
-```text
-num_attention_ranks >= num_ffn_ranks
-num_attention_ranks % num_ffn_ranks == 0
+```jsonc
+"connector_extra_config": {
+  "async_transfer": true,
+  "async_slots": 2
+}
 ```
 
-Therefore, every FFN rank maps to the same integer number of consecutive Attention ranks.
+The current MVP fails fast unless all of the following hold:
+
+- eager execution (`--enforce-eager`);
+- `1A1F` topology;
+- DBO enabled with exactly two ubatches;
+- `async_slots` equals `2`.
+
+It uses connector-owned A2F and F2A CUDA streams, CUDA events for compute/transfer dependencies, and bounded receive buffers. The synchronous path remains the default and CUDA graph is not supported by this experimental path. gpu-host DeepSeek-V2-Lite validation has established semantic equivalence to the synchronous reference and profiler-visible compute/communication overlap. Performance, concurrent soak, failure-path, and broader-topology validation remain incomplete, so this mode is still experimental and is not recommended for production use. See `experiment/DSV2_LITE_GPU_ASYNC_DESIGN.md` for the evidence and remaining gates.
+
+## Topology rules
+
+`P2pNcclAFDConnector` currently requires one side to be an integer multiple of the other:
+
+```text
+max(num_attention_ranks, num_ffn_ranks) % min(num_attention_ranks, num_ffn_ranks) == 0
+```
+
+Therefore, each rank on the smaller side maps to the same integer number of consecutive peers on the larger side.
 
 Examples:
 
@@ -117,7 +136,8 @@ Examples:
 | `1A1F` | Yes | `F0 <-> A0` |
 | `2A2F` | Yes | `F0 <-> A0`, `F1 <-> A1` |
 | `4A2F` | Yes | `F0 <-> A0,A1`, `F1 <-> A2,A3` |
-| `1A2F` | No | Attention rank count is smaller than FFN rank count. |
+| `1A2F` | Yes | `A0 <-> F0,F1`; Attention activations fan out to both FFN peers. |
+| `2A4F` | Yes | `A0 <-> F0,F1`, `A1 <-> F2,F3` |
 | `3A2F` | No | Attention rank count is not divisible by FFN rank count. |
 
 ## Minimal launch shape

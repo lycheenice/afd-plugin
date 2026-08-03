@@ -19,6 +19,7 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 import vllm.v1.engine.core as core_module
+from vllm.distributed.parallel_state import cleanup_dist_env_and_memory
 
 from afd_plugin.config import AFDConfig, parse_optional_afd_config
 
@@ -204,6 +205,7 @@ def shutdown(self):
             model_executor.shutdown()
         with suppress(Exception):
             gc.unfreeze()
+        cleanup_dist_env_and_memory()
         return
     # ### PATCH END: AFD FFN EngineCore shutdown
 
@@ -212,6 +214,9 @@ def shutdown(self):
         self.model_executor.shutdown()
     if self.scheduler:
         self.scheduler.shutdown()
+    with suppress(Exception):
+        gc.unfreeze()
+    cleanup_dist_env_and_memory()
 
 
 # Patch reason: late-loaded AFD FFN EngineCore paths may ask for KV cache setup
@@ -310,6 +315,7 @@ def run_busy_loop(self):
         while self._handle_shutdown():
             # 1) Poll the input queue until there is work to do.
             self._process_input_queue()
+            self._maybe_publish_request_counts()
 
             if self.eep_scaling_state is not None:
                 _ = self.eep_scaling_state.progress()
@@ -328,9 +334,11 @@ def run_busy_loop(self):
                     # All engines are idle.
                     continue
 
-                # We are in a running state and so must execute a dummy pass
-                # if the model didn't execute any ready requests.
-                self.execute_dummy_batch()
+                # Execute a dummy pass when no ready requests ran, unless the
+                # engine is sleeping.
+                if not self.model_executor.is_sleeping:
+                    with self.log_iteration_details(None):
+                        self.execute_dummy_batch()
 
             # 3) All-reduce operation to determine global unfinished reqs.
             self.engines_running = self._has_global_unfinished_reqs(
@@ -457,8 +465,11 @@ def _initialize_ffn_engine_core(
     self.aborts_queue = queue.Queue()
     self._idle_state_callbacks = []
     self.use_spec_decode = False
+    self.check_for_draft_tokens = False
     self.is_pooling_model = False
     self.is_ec_consumer = True
+    self.step_fn = None
+    self.async_scheduling = False
 
 
 def _prepare_late_loaded_ffn_engine_core(

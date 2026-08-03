@@ -12,10 +12,12 @@ tests for GPU and Ascend NPU deployments.
 > This project is still experimental and needs more large-scale testing across
 > different hardware backends.
 
-The target runtime is **vLLM `v0.19.1`**. The plugin does not modify the vLLM
-source tree. AFD behavior is installed through the `vllm.general_plugins` entry
-point, `--additional-config`, automatically selected role workers, plugin-owned
-model wrappers, and narrow version-scoped compatibility shims.
+The target GPU runtime is **vLLM `v0.25.0`**. The legacy vLLM `v0.19.1`
+runtime remains supported for the existing GPU and Ascend NPU baseline. The
+plugin does not modify the vLLM source tree. AFD behavior is installed through
+the `vllm.general_plugins` entry point, `--additional-config`, automatically
+selected role workers, plugin-owned model wrappers, and narrow version-scoped
+compatibility shims.
 
 ## Architecture
 
@@ -53,8 +55,11 @@ Connector implementations are grouped by backend package:
 
 Known gaps:
 
-- vLLM versions other than `0.19.1` are not claimed as supported.
+- GPU support is version-scoped to vLLM `0.25.0` and the legacy `0.19.1`
+  baseline.
 - vLLM/vLLM-Ascend model runner v2 is not supported.
+- The vLLM `0.25.0` GPU path must set `VLLM_USE_V2_MODEL_RUNNER=0` until the
+  AFD workers are ported to model runner v2.
 - GPU and NPU E2E tests are opt-in and require real hardware plus model weights.
 - GPU CUDA graph support is limited to `FULL_DECODE_ONLY`.
 - GPU DBO plus CUDA graph is limited to exactly two ubatches.
@@ -81,7 +86,8 @@ command:
 uv sync --group dev --extra vllm
 ```
 
-The optional extra pins `vllm==0.19.1`.
+The optional extra pins `vllm==0.25.0`. Existing vLLM `0.19.1` deployments
+should install the plugin with `--no-deps` inside their pinned runtime image.
 
 ### Ascend NPU installation
 

@@ -1,0 +1,716 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "DeepSeek-V2-Lite vLLM 0.25.0：gpu-host AFD GPU 验证与异步优化报告",
+    "description": "截至 2026-07-29 的可复现实验快照；仅修复后 4A4F 因八卡外部任务占用待补齐。",
+    "generatedAt": "2026-07-29T02:30:00Z",
+    "cards": [
+      {
+        "id": "gpu_e2e",
+        "description": "不含 GSM8K accuracy 的现有 GPU E2E 用例。",
+        "dataset": "headline",
+        "sourceId": "result_index",
+        "metrics": [
+          {
+            "label": "GPU E2E passed",
+            "field": "gpu_e2e_passed",
+            "format": "number"
+          },
+          {
+            "label": "Total",
+            "field": "gpu_e2e_total",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "async_soak",
+        "description": "32 并发、DBO、1A1F eager 的 async 长稳请求。",
+        "dataset": "headline",
+        "sourceId": "async_soak_source",
+        "metrics": [
+          {
+            "label": "Async semantic pass",
+            "field": "async_semantic_passed",
+            "format": "number"
+          },
+          {
+            "label": "Async vs sync mismatches",
+            "field": "async_sync_mismatches",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "performance_gate",
+        "description": "达到吞吐提升或 TPOT 降低至少 10% 的 paired workload 数。",
+        "dataset": "headline",
+        "sourceId": "performance_source",
+        "metrics": [
+          {
+            "label": "Performance gates passed",
+            "field": "performance_gates_passed",
+            "format": "number"
+          },
+          {
+            "label": "Workloads",
+            "field": "performance_workloads",
+            "format": "number"
+          }
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "coverage_chart",
+        "title": "当前验证覆盖",
+        "subtitle": "通过项/计划项；4A4F 指 metadata 修复后的防回归，仍待资源。",
+        "type": "bar",
+        "dataset": "coverage",
+        "sourceId": "result_index",
+        "encodings": {
+          "x": {
+            "field": "category",
+            "type": "nominal",
+            "label": "验证分组"
+          },
+          "y": {
+            "field": "passed",
+            "type": "quantitative",
+            "label": "通过项",
+            "format": "number"
+          }
+        },
+        "yAxisTitle": "通过项",
+        "valueFormat": "number",
+        "layout": "full"
+      },
+      {
+        "id": "overlap_chart",
+        "title": "通信—计算重叠时间",
+        "subtitle": "torch profiler 单次观测，单位 ms；同步路径两侧均为 0。",
+        "type": "bar",
+        "dataset": "overlap",
+        "sourceId": "timeline_source",
+        "encodings": {
+          "x": {
+            "field": "role",
+            "type": "nominal",
+            "label": "角色"
+          },
+          "y": {
+            "field": "overlap_ms",
+            "type": "quantitative",
+            "label": "重叠时间 (ms)",
+            "format": "number"
+          },
+          "color": {
+            "field": "mode",
+            "type": "nominal",
+            "label": "路径"
+          }
+        },
+        "yAxisTitle": "重叠时间 (ms)",
+        "valueFormat": "number",
+        "layout": "full"
+      },
+      {
+        "id": "performance_chart",
+        "title": "异步相对同步的性能净收益",
+        "subtitle": "正值代表改善；吞吐使用增幅，TPOT 使用降幅。两组负载均为 3 次重复。",
+        "type": "bar",
+        "dataset": "performance",
+        "sourceId": "performance_source",
+        "encodings": {
+          "x": {
+            "field": "metric",
+            "type": "nominal",
+            "label": "负载与指标"
+          },
+          "y": {
+            "field": "net_benefit_pct",
+            "type": "quantitative",
+            "label": "净收益 (%)",
+            "format": "number"
+          }
+        },
+        "yAxisTitle": "净收益 (%)",
+        "valueFormat": "number",
+        "layout": "full"
+      },
+      {
+        "id": "accuracy_signal_chart",
+        "title": "GSM8K 精度结果与信号",
+        "subtitle": "strict exact_match；full eager/graph 均完成并通过，有效门槛为 0.15。",
+        "type": "bar",
+        "dataset": "accuracy_signal",
+        "sourceId": "accuracy_source",
+        "encodings": {
+          "x": {
+            "field": "mode",
+            "type": "nominal",
+            "label": "执行模式"
+          },
+          "y": {
+            "field": "strict_exact_match",
+            "type": "quantitative",
+            "label": "Strict exact match",
+            "format": "percent"
+          }
+        },
+        "yAxisTitle": "Strict exact match",
+        "valueFormat": "percent",
+        "layout": "full"
+      }
+    ],
+    "tables": [
+      {
+        "id": "topology_table",
+        "title": "metadata 修复后的拓扑防回归",
+        "subtitle": "每个已完成拓扑均执行四条上下文衔接与语义片段门禁。",
+        "dataset": "topologies",
+        "sourceId": "topology_source",
+        "defaultSort": {
+          "field": "topology",
+          "direction": "asc"
+        },
+        "density": "spacious",
+        "layout": "full",
+        "columns": [
+          {
+            "field": "topology",
+            "label": "拓扑",
+            "type": "text"
+          },
+          {
+            "field": "status",
+            "label": "状态",
+            "type": "text"
+          },
+          {
+            "field": "semantic_pass",
+            "label": "语义通过",
+            "type": "text"
+          },
+          {
+            "field": "evidence",
+            "label": "证据 run",
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "id": "pending_table",
+        "title": "自动运行与待补充项",
+        "subtitle": "结果栏按用户要求保留空白；subagent 会在实验结束后同步产物。",
+        "dataset": "pending",
+        "sourceId": "result_index",
+        "defaultSort": {
+          "field": "item",
+          "direction": "asc"
+        },
+        "density": "spacious",
+        "layout": "full",
+        "columns": [
+          {
+            "field": "item",
+            "label": "项目",
+            "type": "text"
+          },
+          {
+            "field": "state",
+            "label": "当前状态",
+            "type": "text"
+          },
+          {
+            "field": "result",
+            "label": "最终结果",
+            "type": "text"
+          }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "result_index",
+        "label": "DS-V2-Lite 实验结果索引",
+        "path": "experiment/results/dsv2_v025/README.md",
+        "query": {
+          "engine": "duckdb",
+          "language": "sql",
+          "description": "Read the reviewed experiment result index and transcribe the documented pass totals.",
+          "sql": "SELECT content FROM read_text(\"experiment/results/dsv2_v025/README.md\")",
+          "tables_used": [
+            "experiment/results/dsv2_v025/README.md"
+          ]
+        }
+      },
+      {
+        "id": "timeline_source",
+        "label": "异步 profiler timeline 解析",
+        "path": "experiment/results/dsv2_v025/20260728T1730Z-async-profiler-timeline/timeline-analysis.json",
+        "query": {
+          "engine": "duckdb",
+          "language": "sql",
+          "description": "Read the saved overlap metrics produced by the repository trace analyzer.",
+          "sql": "SELECT * FROM read_json_auto(\"experiment/results/dsv2_v025/20260728T1730Z-async-profiler-timeline/timeline-analysis.json\")",
+          "tables_used": [
+            "experiment/results/dsv2_v025/20260728T1730Z-async-profiler-timeline/timeline-analysis.json"
+          ]
+        }
+      },
+      {
+        "id": "performance_source",
+        "label": "异步与同步 paired benchmark",
+        "path": "experiment/results/dsv2_v025/20260728T1930Z-async-comm-heavy-benchmark/comparison.json",
+        "query": {
+          "engine": "duckdb",
+          "language": "sql",
+          "description": "Read the saved sync/async comparison and its three-repetition summaries.",
+          "sql": "SELECT * FROM read_json_auto(\"experiment/results/dsv2_v025/20260728T1930Z-async-comm-heavy-benchmark/comparison.json\")",
+          "tables_used": [
+            "experiment/results/dsv2_v025/20260728T1930Z-async-comm-heavy-benchmark/comparison.json"
+          ]
+        }
+      },
+      {
+        "id": "async_soak_source",
+        "label": "async/sync 1000 请求 paired 长稳",
+        "path": "experiment/results/dsv2_v025/20260729T0200Z-async-semantic-soak1000/prompt-smoke.json",
+        "query": {
+          "engine": "duckdb",
+          "language": "sql",
+          "description": "Compare ordered async and sync prompt-smoke results and count mismatches.",
+          "sql": "SELECT * FROM read_json_auto([\"experiment/results/dsv2_v025/20260729T0200Z-async-semantic-soak1000/prompt-smoke.json\", \"experiment/results/dsv2_v025/20260729T0205Z-sync-semantic-soak1000-control/prompt-smoke.json\"])",
+          "tables_used": [
+            "experiment/results/dsv2_v025/20260729T0200Z-async-semantic-soak1000/prompt-smoke.json",
+            "experiment/results/dsv2_v025/20260729T0205Z-sync-semantic-soak1000-control/prompt-smoke.json"
+          ]
+        }
+      },
+      {
+        "id": "accuracy_source",
+        "label": "GSM8K 50 题 eager/graph 结果",
+        "path": "experiment/results/dsv2_v025/20260729T0140Z-accuracy-limit50-graph/manifest.txt",
+        "query": {
+          "engine": "duckdb",
+          "language": "sql",
+          "description": "Read the reviewed 50-question manifests and completed full eager/graph manifests.",
+          "sql": "SELECT content FROM read_text([\"experiment/results/dsv2_v025/20260728T235000Z-accuracy-limit50-eager-retry1/manifest.txt\", \"experiment/results/dsv2_v025/20260729T0140Z-accuracy-limit50-graph/manifest.txt\", \"experiment/results/dsv2_v025/20260729T0215Z-accuracy-full1319-eager/manifest.txt\", \"experiment/results/dsv2_v025/20260729T0453Z-accuracy-full1319-graph-retry1/manifest.txt\"])",
+          "tables_used": [
+            "experiment/results/dsv2_v025/20260728T235000Z-accuracy-limit50-eager-retry1/manifest.txt",
+            "experiment/results/dsv2_v025/20260729T0140Z-accuracy-limit50-graph/manifest.txt",
+            "experiment/results/dsv2_v025/20260729T0215Z-accuracy-full1319-eager/manifest.txt",
+            "experiment/results/dsv2_v025/20260729T0453Z-accuracy-full1319-graph-retry1/manifest.txt"
+          ]
+        }
+      },
+      {
+        "id": "topology_source",
+        "label": "metadata 修复后拓扑结果",
+        "path": "experiment/results/dsv2_v025/20260729T0210Z-topology-2a2f-fix-regression/prompt-smoke.json",
+        "query": {
+          "engine": "duckdb",
+          "language": "sql",
+          "description": "Read the saved semantic prompt results for each post-fix topology regression.",
+          "sql": "SELECT * FROM read_json_auto([\"experiment/results/dsv2_v025/20260728T1608Z-topology-1a2f-fix-retry3/prompt-smoke.json\", \"experiment/results/dsv2_v025/20260728T2358Z-topology-2a1f-fix-regression/prompt-smoke.json\", \"experiment/results/dsv2_v025/20260729T0210Z-topology-2a2f-fix-regression/prompt-smoke.json\"])",
+          "tables_used": [
+            "experiment/results/dsv2_v025/20260728T1608Z-topology-1a2f-fix-retry3/prompt-smoke.json",
+            "experiment/results/dsv2_v025/20260728T2358Z-topology-2a1f-fix-regression/prompt-smoke.json",
+            "experiment/results/dsv2_v025/20260729T0210Z-topology-2a2f-fix-regression/prompt-smoke.json"
+          ]
+        }
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# DeepSeek-V2-Lite vLLM 0.25.0：gpu-host AFD GPU 验证与异步优化报告"
+      },
+      {
+        "id": "technical_summary",
+        "type": "markdown",
+        "body": "## 技术结论：功能与正确性成立，但当前异步实现没有性能发布价值\n\n- **功能基线可信。** 非 accuracy GPU E2E 为 18/18；metadata 修复后的 1A2F、2A1F、2A2F 均通过语义门禁，4A4F 防回归等待八卡自然释放。\n- **异步正确性与机制成立。** 1A1F eager + DBO 下，async/sync 各 1000 请求、32 并发均 1000/1000 语义通过，且两组逐项完全一致；profiler 证明 NCCL 已离开 compute stream并产生真实重叠。\n- **性能门失败。** 两组 paired workload 的异步输出吞吐分别下降 3.43% 和 4.88%，TPOT 分别恶化 4.64% 和 5.93%。因此保持 `async_transfer=false`，不扩展 graph 或复杂拓扑。\n- **full eager/graph 精度均通过。** 两者均为 1319/1319 HTTP 200，strict exact_match 为 0.3791/0.3798，明显高于有效门槛 0.15，且两种执行模式结果一致。"
+      },
+      {
+        "id": "headline_metrics",
+        "type": "metric-strip",
+        "cardIds": [
+          "gpu_e2e",
+          "async_soak",
+          "performance_gate"
+        ]
+      },
+      {
+        "id": "coverage_intro",
+        "type": "markdown",
+        "body": "## 已完成验证覆盖了主要功能路径\n\n现有 feature 与 model matrix 全部通过；metadata 修复后的多拓扑回归已完成三项，剩余 4A4F 只等待资源窗口。图中展示的是当前已通过项，计划总数保留在源数据和下方精确表格中。"
+      },
+      {
+        "id": "coverage",
+        "type": "chart",
+        "chartId": "coverage_chart",
+        "layout": "full"
+      },
+      {
+        "id": "topology_intro",
+        "type": "markdown",
+        "body": "## fan-out metadata 缺陷已修复，三种映射方向已有实机证据\n\n修复位置在 AFD GPU FFN runner 的 forward-context metadata 构造处，覆盖 fan-out、fan-in、one-to-one、TP 投影和 dummy token；没有修改 vLLM MoE dispatch。4A4F 属于 one-to-one 防回归，当前不以修复前结果冒充修复后结论。"
+      },
+      {
+        "id": "topology",
+        "type": "table",
+        "tableId": "topology_table",
+        "layout": "full"
+      },
+      {
+        "id": "mechanism_intro",
+        "type": "markdown",
+        "body": "## 多 stream 让 DBO 流水机会变成真实 GPU 重叠\n\nDBO 只提供两个 ubatch；connector-owned A2F/F2A stream 与 CUDA event 才让通信离开 compute stream。同步 trace 的 Attention/FFN 重叠均为 0；异步 trace 分别观测到约 1.07 ms 和 135.62 ms。该证据证明机制生效，但不等价于端到端收益。"
+      },
+      {
+        "id": "overlap",
+        "type": "chart",
+        "chartId": "overlap_chart",
+        "layout": "full"
+      },
+      {
+        "id": "performance_intro",
+        "type": "markdown",
+        "body": "## 真实重叠被 NCCL SM 竞争与等待开销抵消\n\n为了统一方向，图中正值表示改善：吞吐增幅为正、TPOT 降幅为正。四个观测值全部为负，两组负载均未达到至少 10% 的收益门。NCCL channel=4 调优在初始化阶段超时，未产生可比较样本。"
+      },
+      {
+        "id": "performance",
+        "type": "chart",
+        "chartId": "performance_chart",
+        "layout": "full"
+      },
+      {
+        "id": "stability",
+        "type": "markdown",
+        "sourceId": "async_soak_source",
+        "body": "## 1000 请求 paired 长稳未发现 async 特有正确性退化\n\nasync 与 sync control 各执行 1000 个请求，全部 HTTP 200 且全部满足上下文前缀和语义片段断言；两组输出、finish reason 与 usage 逐项 1000/1000 一致。两组相对串行参考都存在 248 条 Python completion 首尾换行移动，函数体和 token usage 不变，因此这是并发 + DBO batching 的共同确定性边界，不是异步错序。"
+      },
+      {
+        "id": "accuracy_intro",
+        "type": "markdown",
+        "body": "## full eager 与 graph 精度一致通过\n\n50 题 eager 与 graph 的 strict exact_match 均为 0.24；全量 eager 为 strict/flexible 0.3791/0.3829，全量 graph retry 为 0.3798/0.3836，两者均 1319/1319 HTTP 200 并通过有效门槛 0.15。graph 首轮在 968/1319、零 HTTP 错误时命中旧的 7200 秒内层超时，不计入精度结论；retry 显式使用 14400 秒内层预算并 exit 0。"
+      },
+      {
+        "id": "accuracy",
+        "type": "chart",
+        "chartId": "accuracy_signal_chart",
+        "layout": "full"
+      },
+      {
+        "id": "scope",
+        "type": "markdown",
+        "body": "## 范围、数据与指标定义\n\n本报告只覆盖 gpu-host、vLLM 0.25.0、DeepSeek-V2-Lite 和 AFD CUDA GPU 路径；GLM-5.2、W4AFP8 与 Ascend NPU 完全排除。语义通过要求 completion 能直接承接 prompt，并满足预设 prefix、关键语义片段、finish reason 和 token usage 约束。性能比较固定模型、请求集、并发、预热和 3 次重复；净收益定义为吞吐增幅或 TPOT 降幅。"
+      },
+      {
+        "id": "methodology",
+        "type": "markdown",
+        "body": "## 实验设计与复现路径\n\n功能证据来自 GPU E2E、拓扑 prompt smoke、GSM8K lm-eval 和 postflight；异步证据来自隔离单测、sync/async greedy 对照、1000 请求 paired 长稳、torch profiler 与两组 paired benchmark。所有运行保存在 `experiment/results/dsv2_v025/` 和对应 logs；启动、分析和比较脚本保存在 `experiment/scripts/`。异步仅支持 1A1F eager + DBO exactly two ubatches，默认关闭。"
+      },
+      {
+        "id": "limitations",
+        "type": "markdown",
+        "body": "## 局限、稳健性与停止条件\n\n当前 profiler 是单次 trace，能证明依赖与重叠但不能估计总体收益分布；paired benchmark 有 3 次重复，但尚无 native vLLM 同负载数据。async 没有扩展到 graph、DP/TP 或复杂拓扑，因为性能门已经失败。唯一未完成验证是 metadata 修复后的 4A4F 防回归；GPU0–3 的长期外部通信任务和 GPU4–7 的外部 SGLang 服务使 gpu-host 无八卡空闲窗口。"
+      },
+      {
+        "id": "pending",
+        "type": "table",
+        "tableId": "pending_table",
+        "layout": "full"
+      },
+      {
+        "id": "recommendations",
+        "type": "markdown",
+        "body": "## 建议：保持实验开关关闭，只在调度假设改变后重启优化\n\n1. 保持 `async_transfer=false` 默认值，不扩展 graph 或复杂拓扑。\n2. 等 gpu-host 再次明确释放八卡后只补跑 4A4F，随后关闭功能矩阵验收。\n3. 下一轮只有在能够降低 NCCL P2P 的 SM 占用、避免长时间预贴 receive 空等，或扫描 DBO threshold 使小 batch 不拆分时才恢复 paired benchmark。\n4. 若新方案仍达不到至少 10% 收益，删除实验异步分支与配置，仅保留 metadata 修复和本报告证据。"
+      },
+      {
+        "id": "questions",
+        "type": "markdown",
+        "body": "## 待回答问题\n\n- metadata 修复后的 4A4F 是否仍为 4/4 语义通过且无资源残留？\n- 调整 DBO threshold 或 NCCL 调度后，能否在不破坏 1000 请求 paired 一致性的前提下跨过 10% 性能门？"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-29T02:30:00Z",
+    "status": "ready",
+    "datasets": {
+      "headline": [
+        {
+          "gpu_e2e_passed": 18,
+          "gpu_e2e_total": 18,
+          "async_semantic_passed": 1000,
+          "async_sync_mismatches": 0,
+          "performance_gates_passed": 0,
+          "performance_workloads": 2
+        }
+      ],
+      "coverage": [
+        {
+          "category": "GPU feature E2E",
+          "passed": 8,
+          "planned": 8,
+          "status": "complete"
+        },
+        {
+          "category": "Model matrix",
+          "passed": 10,
+          "planned": 10,
+          "status": "complete"
+        },
+        {
+          "category": "Post-fix topology",
+          "passed": 3,
+          "planned": 4,
+          "status": "4A4F pending"
+        },
+        {
+          "category": "GSM8K 50-sample",
+          "passed": 2,
+          "planned": 2,
+          "status": "complete"
+        }
+      ],
+      "overlap": [
+        {
+          "role": "Attention",
+          "mode": "sync",
+          "overlap_ms": 0,
+          "trace_run": "20260728T1723Z"
+        },
+        {
+          "role": "Attention",
+          "mode": "async",
+          "overlap_ms": 1.07107,
+          "trace_run": "20260728T1730Z"
+        },
+        {
+          "role": "FFN",
+          "mode": "sync",
+          "overlap_ms": 0,
+          "trace_run": "20260728T1723Z"
+        },
+        {
+          "role": "FFN",
+          "mode": "async",
+          "overlap_ms": 135.61644,
+          "trace_run": "20260728T1730Z"
+        }
+      ],
+      "performance": [
+        {
+          "metric": "C16 throughput",
+          "net_benefit_pct": -3.43,
+          "sync_value": 149.33,
+          "async_value": 144.20,
+          "unit": "output tok/s",
+          "repetitions": 3
+        },
+        {
+          "metric": "C16 TPOT",
+          "net_benefit_pct": -4.64,
+          "sync_value": 102.47,
+          "async_value": 107.22,
+          "unit": "ms",
+          "repetitions": 3
+        },
+        {
+          "metric": "C64 throughput",
+          "net_benefit_pct": -4.88,
+          "sync_value": 588.77,
+          "async_value": 560.05,
+          "unit": "output tok/s",
+          "repetitions": 3
+        },
+        {
+          "metric": "C64 TPOT",
+          "net_benefit_pct": -5.93,
+          "sync_value": 103.57,
+          "async_value": 109.71,
+          "unit": "ms",
+          "repetitions": 3
+        }
+      ],
+      "accuracy_signal": [
+        {
+          "mode": "eager",
+          "strict_exact_match": 0.24,
+          "flexible_exact_match": 0.26,
+          "effective_threshold": 0.15,
+          "sample_size": 50
+        },
+        {
+          "mode": "graph",
+          "strict_exact_match": 0.24,
+          "flexible_exact_match": 0.24,
+          "effective_threshold": 0.15,
+          "sample_size": 50
+        },
+        {
+          "mode": "eager full",
+          "strict_exact_match": 0.3791,
+          "flexible_exact_match": 0.3829,
+          "effective_threshold": 0.15,
+          "sample_size": 1319
+        },
+        {
+          "mode": "graph full",
+          "strict_exact_match": 0.3798,
+          "flexible_exact_match": 0.3836,
+          "effective_threshold": 0.15,
+          "sample_size": 1319
+        }
+      ],
+      "topologies": [
+        {
+          "order": 1,
+          "topology": "1A2F",
+          "status": "passed",
+          "semantic_pass": "4/4",
+          "evidence": "20260728T1608Z-topology-1a2f-fix-retry3"
+        },
+        {
+          "order": 2,
+          "topology": "2A1F",
+          "status": "passed",
+          "semantic_pass": "4/4",
+          "evidence": "20260728T2358Z-topology-2a1f-fix-regression"
+        },
+        {
+          "order": 3,
+          "topology": "2A2F",
+          "status": "passed",
+          "semantic_pass": "4/4",
+          "evidence": "20260729T0210Z-topology-2a2f-fix-regression"
+        },
+        {
+          "order": 4,
+          "topology": "4A4F",
+          "status": "pending GPU release",
+          "semantic_pass": "",
+          "evidence": ""
+        }
+      ],
+      "pending": [
+        {
+          "order": 1,
+          "item": "GSM8K full eager (1319)",
+          "state": "completed",
+          "result": "strict 0.3791 / flexible 0.3829; passed"
+        },
+        {
+          "order": 2,
+          "item": "GSM8K full graph (1319)",
+          "state": "completed",
+          "result": "strict 0.3798 / flexible 0.3836; passed"
+        },
+        {
+          "order": 3,
+          "item": "Post-fix 4A4F semantic regression",
+          "state": "waiting for all 8 GPUs",
+          "result": ""
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "result_index",
+      "label": "DS-V2-Lite 实验结果索引",
+      "path": "experiment/results/dsv2_v025/README.md",
+      "query": {
+        "engine": "duckdb",
+        "language": "sql",
+        "description": "Read the reviewed experiment result index and transcribe the documented pass totals.",
+        "sql": "SELECT content FROM read_text(\"experiment/results/dsv2_v025/README.md\")",
+        "tables_used": [
+          "experiment/results/dsv2_v025/README.md"
+        ]
+      }
+    },
+    {
+      "id": "timeline_source",
+      "label": "异步 profiler timeline 解析",
+      "path": "experiment/results/dsv2_v025/20260728T1730Z-async-profiler-timeline/timeline-analysis.json",
+      "query": {
+        "engine": "duckdb",
+        "language": "sql",
+        "description": "Read the saved overlap metrics produced by the repository trace analyzer.",
+        "sql": "SELECT * FROM read_json_auto(\"experiment/results/dsv2_v025/20260728T1730Z-async-profiler-timeline/timeline-analysis.json\")",
+        "tables_used": [
+          "experiment/results/dsv2_v025/20260728T1730Z-async-profiler-timeline/timeline-analysis.json"
+        ]
+      }
+    },
+    {
+      "id": "performance_source",
+      "label": "异步与同步 paired benchmark",
+      "path": "experiment/results/dsv2_v025/20260728T1930Z-async-comm-heavy-benchmark/comparison.json",
+      "query": {
+        "engine": "duckdb",
+        "language": "sql",
+        "description": "Read the saved sync/async comparison and its three-repetition summaries.",
+        "sql": "SELECT * FROM read_json_auto(\"experiment/results/dsv2_v025/20260728T1930Z-async-comm-heavy-benchmark/comparison.json\")",
+        "tables_used": [
+          "experiment/results/dsv2_v025/20260728T1930Z-async-comm-heavy-benchmark/comparison.json"
+        ]
+      }
+    },
+    {
+      "id": "async_soak_source",
+      "label": "async/sync 1000 请求 paired 长稳",
+      "path": "experiment/results/dsv2_v025/20260729T0200Z-async-semantic-soak1000/prompt-smoke.json",
+      "query": {
+        "engine": "duckdb",
+        "language": "sql",
+        "description": "Compare ordered async and sync prompt-smoke results and count mismatches.",
+        "sql": "SELECT * FROM read_json_auto([\"experiment/results/dsv2_v025/20260729T0200Z-async-semantic-soak1000/prompt-smoke.json\", \"experiment/results/dsv2_v025/20260729T0205Z-sync-semantic-soak1000-control/prompt-smoke.json\"])",
+        "tables_used": [
+          "experiment/results/dsv2_v025/20260729T0200Z-async-semantic-soak1000/prompt-smoke.json",
+          "experiment/results/dsv2_v025/20260729T0205Z-sync-semantic-soak1000-control/prompt-smoke.json"
+        ]
+      }
+    },
+    {
+      "id": "accuracy_source",
+      "label": "GSM8K 50 题 eager/graph 结果",
+      "path": "experiment/results/dsv2_v025/20260729T0140Z-accuracy-limit50-graph/manifest.txt",
+      "query": {
+        "engine": "duckdb",
+        "language": "sql",
+          "description": "Read the reviewed 50-question manifests and completed full eager/graph manifests.",
+          "sql": "SELECT content FROM read_text([\"experiment/results/dsv2_v025/20260728T235000Z-accuracy-limit50-eager-retry1/manifest.txt\", \"experiment/results/dsv2_v025/20260729T0140Z-accuracy-limit50-graph/manifest.txt\", \"experiment/results/dsv2_v025/20260729T0215Z-accuracy-full1319-eager/manifest.txt\", \"experiment/results/dsv2_v025/20260729T0453Z-accuracy-full1319-graph-retry1/manifest.txt\"])",
+        "tables_used": [
+          "experiment/results/dsv2_v025/20260728T235000Z-accuracy-limit50-eager-retry1/manifest.txt",
+            "experiment/results/dsv2_v025/20260729T0140Z-accuracy-limit50-graph/manifest.txt",
+            "experiment/results/dsv2_v025/20260729T0215Z-accuracy-full1319-eager/manifest.txt",
+            "experiment/results/dsv2_v025/20260729T0453Z-accuracy-full1319-graph-retry1/manifest.txt"
+        ]
+      }
+    },
+    {
+      "id": "topology_source",
+      "label": "metadata 修复后拓扑结果",
+      "path": "experiment/results/dsv2_v025/20260729T0210Z-topology-2a2f-fix-regression/prompt-smoke.json",
+      "query": {
+        "engine": "duckdb",
+        "language": "sql",
+        "description": "Read the saved semantic prompt results for each post-fix topology regression.",
+        "sql": "SELECT * FROM read_json_auto([\"experiment/results/dsv2_v025/20260728T1608Z-topology-1a2f-fix-retry3/prompt-smoke.json\", \"experiment/results/dsv2_v025/20260728T2358Z-topology-2a1f-fix-regression/prompt-smoke.json\", \"experiment/results/dsv2_v025/20260729T0210Z-topology-2a2f-fix-regression/prompt-smoke.json\"])",
+        "tables_used": [
+          "experiment/results/dsv2_v025/20260728T1608Z-topology-1a2f-fix-retry3/prompt-smoke.json",
+          "experiment/results/dsv2_v025/20260728T2358Z-topology-2a1f-fix-regression/prompt-smoke.json",
+          "experiment/results/dsv2_v025/20260729T0210Z-topology-2a2f-fix-regression/prompt-smoke.json"
+        ]
+      }
+    }
+  ]
+}

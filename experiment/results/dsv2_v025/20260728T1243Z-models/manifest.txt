@@ -1,0 +1,34 @@
+run_id=20260728T1243Z-models
+scope=DeepSeek-V2-Lite-only
+category=models
+host=redacted-host
+container=afd-v025-validate
+container_image=sha256:fc56161ee42a011aeee78b65d0a81b6683c7d04402fd40503d14d4d6c98f07cb
+repo_root=/workspace/afd-plugin
+container_repo_root=/workspace/afd-plugin
+git_commit=9d6aa37c452a4a44722a4d5cc58a17c67f6a4783
+git_dirty_files=24
+vllm_version=0.25.0
+virtual_env=/afd-v25/e2e-runtime
+python_version=Python 3.12.13
+torch_version=2.11.0+cu130
+cuda_version=13.0
+gpu_count=8
+gpu_list=0,1,2,3
+model_path=/models/DeepSeek-V2-Lite
+vllm_bin=/usr/local/bin/vllm
+model_runner_v2=disabled
+gsm8k_limit=full
+gsm8k_threshold=0.20
+gsm8k_tolerance=0.05
+0, NVIDIA H20-3e, 143771 MiB, 4 MiB
+1, NVIDIA H20-3e, 143771 MiB, 4 MiB
+2, NVIDIA H20-3e, 143771 MiB, 4 MiB
+3, NVIDIA H20-3e, 143771 MiB, 4 MiB
+4, NVIDIA H20-3e, 143771 MiB, 4 MiB
+5, NVIDIA H20-3e, 143771 MiB, 4 MiB
+6, NVIDIA H20-3e, 143771 MiB, 4 MiB
+7, NVIDIA H20-3e, 143771 MiB, 4 MiB
+collected_test_count=10
+test_exit_code=0
+completed_at=2026-07-28T13:04:25Z
